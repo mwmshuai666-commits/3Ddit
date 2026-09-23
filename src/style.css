@@ -1,0 +1,64 @@
+/* 全局基底：数字孪生场景编辑器（暗色） */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0e16;
+  color: #c6d0e0;
+  font-family:
+    system-ui,
+    'Segoe UI',
+    'Microsoft YaHei',
+    Roboto,
+    sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  text-align: left;
+  border: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3346;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a475f;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* number input 隐藏原生上下箭头，视觉更干净 */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
