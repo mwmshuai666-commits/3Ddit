@@ -4,6 +4,7 @@ import {
   GROUND_CATALOG,
   PRIMITIVE_CATALOG,
   LIGHT_CATALOG,
+  EFFECT_SECTION,
 } from '../schema/sceneSchema'
 import {
   editor,
@@ -88,7 +89,23 @@ function fmtSize(bytes) {
     </section>
 
     <section class="lib-section">
-      <h3>④ 行业模型 <span>· glb 素材，点击复用</span></h3>
+      <h3>④ 特效组件 <span>· 能量管道 / 飞线 / 波纹墙 / 天气效果</span></h3>
+      <div class="item-grid">
+        <button
+          v-for="d in EFFECT_SECTION"
+          :key="d.type"
+          class="lib-item"
+          :title="d.desc"
+          @click="addFromCatalog(d.kind, d)"
+        >
+          <span class="lib-icon" :class="d.kind">{{ d.icon }}</span>
+          {{ d.name }}
+        </button>
+      </div>
+    </section>
+
+    <section class="lib-section">
+      <h3>⑤ 行业模型 <span>· glb 素材，点击复用</span></h3>
       <input
         ref="fileInput"
         type="file"
@@ -192,6 +209,12 @@ function fmtSize(bytes) {
     linear-gradient(90deg, #4a5870 1.5px, transparent 1.5px);
   background-size: 11px 11px;
 }
+.sw-digital {
+  background-color: #041018;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.9) 0, rgba(0, 229, 255, 0.15) 45%, transparent 60%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.55) 0 1px, transparent 1px 5px);
+}
 .ground-text {
   display: flex;
   flex-direction: column;
@@ -243,6 +266,14 @@ function fmtSize(bytes) {
 .lib-icon.light {
   color: #e8c46a;
   background: #3a3220;
+}
+.lib-icon.pipe {
+  color: #4fd8ff;
+  background: #10314a;
+}
+.lib-icon.effect {
+  color: #b48cff;
+  background: #2a1f45;
 }
 .upload-btn {
   width: 100%;

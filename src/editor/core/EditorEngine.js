@@ -35,6 +35,16 @@ import {
 } from '@babylonjs/core'
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { registerBuiltInLoaders } from '@babylonjs/loaders/dynamic'
+import { findCatalog } from '../schema/sceneSchema'
+import {
+  createPipeVisual,
+  disposePipeVisual,
+  updatePipeLook,
+  pipeSignature,
+  setPipeParticleHead,
+  setPipeParticles,
+} from './pipeBuilder'
+import { createDigitalGround, disposeDigitalGround, updateDigitalGroundProps } from './digitalGround'
 
 registerBuiltInLoaders() // glTF / glb / obj 等解析器注册到 SceneLoader
 
@@ -76,23 +86,44 @@ export default class EditorEngine {
 
     this.engine = new Engine(canvas, true, { antialias: true, alpha: false }, true)
     this.scene = new Scene(this.engine)
-    this.scene.useLogarithmicDepth = true
+    // 这里以前写的是 scene.useLogarithmicDepth = true，Babylon 9 的 Scene 上没这个字段，
+    // 赋值只是挂个没人读的属性，属于无效代码（已删）。对数深度现在是逐材质的
+    // material.useLogarithmicDepth，要开就得给每个材质都开，本项目不需要。
 
     this._initCamera()
     this._initGizmos()
     this._initPicking()
 
-    // 有方向属性的灯光（平行光/聚光/半球）每帧从 wrapper 朝向同步方向
+    // 灯光每帧从 wrapper 朝向同步方向；能量管道每帧滚流动光带
     const up = Vector3.Up()
     const down = Vector3.Down()
     const tmpDir = Vector3.Zero()
     this.scene.onBeforeRenderObservable.add(() => {
+      const dt = Math.min(0.1, this.engine.getDeltaTime() / 1000)
+
+      // 数字科技地板：扩散波时钟（速度系数在 digitalGround 里乘，改速度即时生效）
+      if (this.groundEntry?.setTime) {
+        this._groundSeconds += dt
+        this.groundEntry.setTime(this._groundSeconds)
+      }
+
       for (const entry of this.entries.values()) {
-        if (entry.kind !== 'light' || entry.type === 'point') continue
-        const base = entry.type === 'hemispheric' ? up : down
-        Vector3.TransformNormalToRef(base, entry.wrapper.getWorldMatrix(), tmpDir)
-        tmpDir.normalize()
-        entry.object.direction.copyFrom(tmpDir)
+        if (entry.kind === 'light') {
+          if (entry.type === 'point') continue
+          const base = entry.type === 'hemispheric' ? up : down
+          Vector3.TransformNormalToRef(base, entry.wrapper.getWorldMatrix(), tmpDir)
+          tmpDir.normalize()
+          entry.object.direction.copyFrom(tmpDir)
+        } else if (entry.kind === 'pipe' && entry.visual?.flowTexture) {
+          const v = entry.visual
+          v.flowOffset -= (entry.speed || 0) * dt
+          v.flowTexture.uOffset = v.flowOffset
+          // 管内粒子：发射点沿弧长匀速前进，粒子原地滞留淡出 → 一串流光
+          if (v.particles) {
+            v.flowHead += (entry.particleSpeed || 0) * dt
+            setPipeParticleHead(v, v.flowHead, entry.wrapper.getWorldMatrix())
+          }
+        }
       }
     })
 
@@ -103,6 +134,11 @@ export default class EditorEngine {
       if (!this._disposed && this.scene.activeCamera) this.scene.render()
     })
     window.addEventListener('resize', this._onResize)
+
+    // 侧栏折叠/展开会改变画布 CSS 尺寸，Babylon 不监听 ResizeObserver，这里补上
+    this._resizeObserver =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(this._onResize) : null
+    this._resizeObserver?.observe(canvas)
 
     // 仅开发期暴露，方便 CDP / 控制台冒烟调试
     if (import.meta.env.DEV) {
@@ -204,6 +240,11 @@ export default class EditorEngine {
   /* ============ 地面 ============ */
 
   setGround(ground) {
+    // 数字科技地板：参数变化只改着色器 uniform，别把四张贴图反复重建
+    if (this.groundEntry?.setTime && ground.type === 'digital') {
+      updateDigitalGroundProps(this.groundEntry, ground.props)
+      return
+    }
     this._disposeGround()
     this._buildGround(ground)
   }
@@ -214,6 +255,15 @@ export default class EditorEngine {
 
   _buildGround(ground) {
     const { type, props } = ground
+
+    // 数字科技地板：圆盘 + 着色器，和平面地板完全不同的实现
+    if (type === 'digital') {
+      this.groundEntry = createDigitalGround(this.scene, props)
+      this._groundSeconds = 0
+      this.groundEntry.setTime(0)
+      return
+    }
+
     const size = props.size || 200
     const mesh = MeshBuilder.CreateGround(
       'editorGround',
@@ -243,7 +293,7 @@ export default class EditorEngine {
     }
 
     mesh.material = mat
-    this.groundEntry = { mesh, material: mat }
+    this.groundEntry = { mesh, material: mat, textures: [mat.diffuseTexture] }
   }
 
   _createGridTexture(bg, line, serverRoom) {
@@ -292,12 +342,17 @@ export default class EditorEngine {
 
   _disposeGround() {
     if (!this.groundEntry) return
-    const { mesh, material } = this.groundEntry
-    const tex = material.diffuseTexture
-    mesh.dispose()
-    material.dispose()
-    tex?.dispose()
+    if (this.groundEntry.setTime) {
+      // 数字科技地板：材质是 ShaderMaterial，贴图归它自己管
+      disposeDigitalGround(this.groundEntry)
+    } else {
+      const { mesh, material, textures } = this.groundEntry
+      mesh.dispose()
+      material?.dispose()
+      for (const t of textures || []) t?.dispose()
+    }
     this.groundEntry = null
+    this._groundSeconds = 0
   }
 
   /* ============ 节点实例化 ============ */
@@ -398,6 +453,19 @@ export default class EditorEngine {
     } else if (node.kind === 'light') {
       entry.object = this._createLight(node)
       entry.object.parent = wrapper
+    } else if (node.kind === 'pipe') {
+      entry.visual = this._createPipe(node)
+      entry.object = entry.visual?.tube || null
+      entry.material = entry.visual?.flowMaterial || null
+      entry.speed = Number(node.props.speed) || 0
+      entry.particleSpeed = Number(node.props.particleSpeed) || 0
+      entry.sig = pipeSignature(node.props)
+      if (entry.visual?.tube) entry.visual.tube.parent = wrapper
+      if (entry.visual?.casing) entry.visual.casing.parent = wrapper
+    } else if (node.kind === 'effect') {
+      // 网格由 DatavEffect.vue 挂载的 babylon-datav 组件创建，
+      // 就绪后通过 attachEffectMesh 回填 entry.object
+      entry.effectMesh = findCatalog(node.kind, node.type)?.meshName || null
     }
 
     this._applyTransform(wrapper, node.transform)
@@ -463,6 +531,33 @@ export default class EditorEngine {
     return mesh
   }
 
+  /** 能量管道：内芯 + 外壳 + 流动贴图（几何参数见 pipeBuilder） */
+  _createPipe(node) {
+    return createPipeVisual(this.scene, node)
+  }
+
+  /** 折点/管径等几何参数变化：整体重建，并保留光带滚动相位 / 粒子进度 */
+  _rebuildPipe(entry, nodeId, props) {
+    const wasSelected = this._selectedId === nodeId
+    const phase = entry.visual?.flowOffset || 0
+    const head = entry.visual?.flowHead || 0
+
+    disposePipeVisual(entry.visual)
+    entry.visual = this._createPipe({ id: nodeId, props })
+    entry.sig = pipeSignature(props)
+    if (!entry.visual?.tube) return
+
+    entry.visual.flowOffset = phase
+    entry.visual.flowHead = head
+    entry.visual.tube.parent = entry.wrapper
+    entry.visual.tube.metadata = { nodeId }
+    if (entry.visual.casing) entry.visual.casing.parent = entry.wrapper
+    entry.object = entry.visual.tube
+    entry.material = entry.visual.flowMaterial
+
+    if (wasSelected) this._setPipeHighlight(entry.visual, true)
+  }
+
   _createLight(node) {
     const { type, props } = node
     const name = `l_${node.id}`
@@ -502,6 +597,12 @@ export default class EditorEngine {
 
   /* ============ 属性变更 ============ */
 
+  /**
+   * 名称只存在于文档里（网格名统一用 nodeId 生成，读档/点选都不依赖 name），
+   * 但 store 会调这个方法，这里留个空实现避免调用不存在的函数报错。
+   */
+  renameNode() {}
+
   updateProps(nodeId, props) {
     const entry = this.entries.get(nodeId)
     if (!entry) return
@@ -520,8 +621,41 @@ export default class EditorEngine {
       if (wasSelected) this._setMeshHighlight(newMesh, true)
     } else if (entry.kind === 'light') {
       this._applyLightProps(entry.object, entry.type, props)
+    } else if (entry.kind === 'pipe') {
+      const sig = pipeSignature(props)
+      if (sig !== entry.sig) {
+        // 折点或几何参数变化 → 重建（CreateTube 的 instance 更新要求路径点数一致）
+        this._rebuildPipe(entry, nodeId, props)
+      } else {
+        updatePipeLook(entry.visual, props)
+      }
+      // 粒子开关 / 颜色 / 大小随时能改；速度只在每帧读，记在 entry 上
+      setPipeParticles(this.scene, { id: nodeId, props }, entry.visual)
+      entry.speed = Number(props.speed) || 0
+      entry.particleSpeed = Number(props.particleSpeed) || 0
+    } else if (entry.kind === 'effect') {
+      this._applyEffectProps()
     }
   }
+
+  /**
+   * DatavEffect.vue 认领到网格后回调：把组件创建的网格挂到节点 wrapper 下，
+   * 之后 wrapper 的 transform / gizmo / 点选 / 聚焦全部自动生效。
+   */
+  attachEffectMesh(nodeId, mesh) {
+    const entry = this.entries.get(nodeId)
+    if (!entry || !mesh) return
+    mesh.parent = entry.wrapper
+    entry.object = mesh
+    entry.material = mesh.material
+    if (this._selectedId === nodeId) this._setEffectHighlight(entry, true)
+  }
+
+  /**
+   * 特效节点：props 变化由组件自己的 watch 处理（内部会 rebuild），
+   * 引擎这边什么都不用做。
+   */
+  _applyEffectProps() {}
 
   _applyLightProps(light, type, props) {
     if (props.intensity !== undefined) light.intensity = props.intensity
@@ -553,6 +687,12 @@ export default class EditorEngine {
         entry.container.removeAllFromScene()
         entry.container.dispose()
       }
+    } else if (entry.kind === 'pipe') {
+      disposePipeVisual(entry.visual)
+    } else if (entry.kind === 'effect') {
+      // 网格由 Vue 组件卸载时释放；这里只解除选中态的包围盒
+      if (entry.object) entry.object.showBoundingBox = false
+      entry.object?.dispose()
     } else {
       entry.object?.dispose()
       if (entry.kind === 'primitive') entry.material?.dispose()
@@ -626,8 +766,45 @@ export default class EditorEngine {
   _setEntryHighlight(entry, on) {
     if (entry.kind === 'primitive' && entry.object) {
       this._setMeshHighlight(entry.object, on)
+    } else if (entry.kind === 'pipe' && entry.visual) {
+      this._setPipeHighlight(entry.visual, on)
+    } else if (entry.kind === 'effect') {
+      this._setEffectHighlight(entry, on)
     } else if (entry.kind === 'model') {
       this._setModelHighlight(entry, on)
+    }
+  }
+
+  /**
+   * 管道选中态：点亮外壳（半透明玻璃罩）而不是描边 ——
+   * 管壁是 ribbon，开 edgesRendering 会把整条管道糊成一团。
+   * （Babylon 9 的 renderOverlay 已不再参与渲染，只能自己改材质。）
+   */
+  _setPipeHighlight(visual, on) {
+    const casing = visual?.casing
+    if (!casing) return
+    const mat = visual.casingMaterial
+    if (on) {
+      mat.emissiveColor = EDGE_COLOR.scale(0.55)
+      mat.alpha = Math.min(0.95, (visual.casingAlpha || 0.2) + 0.28)
+    } else {
+      mat.emissiveColor = visual.tint.scale(0.05)
+      mat.alpha = visual.casingAlpha
+    }
+  }
+
+  /** 特效选中态：包围盒（组件材质由自己管，不适合直接改） */
+  _setEffectHighlight(entry, on) {
+    const mesh = entry.object
+    if (!mesh || mesh.isDisposed()) return
+    mesh.showBoundingBox = on
+    if (on) {
+      const box = this.scene.getBoundingBoxRenderer?.()
+      if (box) {
+        box.frontColor = EDGE_COLOR
+        box.backColor = EDGE_COLOR
+        box.showBackLines = false
+      }
     }
   }
 
@@ -672,6 +849,10 @@ export default class EditorEngine {
     let bounds = null
     if (entry.kind === 'primitive') {
       bounds = entry.object.getHierarchyBoundingVectors?.()
+    } else if (entry.kind === 'pipe' && entry.visual?.tube) {
+      bounds = entry.visual.tube.getHierarchyBoundingVectors?.()
+    } else if (entry.kind === 'effect' && entry.object && !entry.object.isDisposed()) {
+      bounds = entry.object.getHierarchyBoundingVectors?.()
     } else if (entry.kind === 'model' && entry.meshes.length) {
       // 多网格合并世界包围盒
       let min = null
@@ -695,6 +876,8 @@ export default class EditorEngine {
   dispose() {
     this._disposed = true
     window.removeEventListener('resize', this._onResize)
+    this._resizeObserver?.disconnect()
+    this._resizeObserver = null
     this.engine.getRenderingCanvas()?.removeEventListener('pointerup', this._onCanvasPointerUp)
     this.engine.stopRenderLoop()
     this.scene.dispose()

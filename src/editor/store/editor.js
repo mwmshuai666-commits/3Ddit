@@ -11,6 +11,7 @@ import {
   GROUND_CATALOG,
   GROUND_SELECTION,
   PRIMITIVE_CATALOG,
+  PIPE_SHAPE_PRESETS,
   createDefaultDocument,
   createNode,
   createModelNode,
@@ -144,6 +145,19 @@ export function findNode(id) {
 export function addFromCatalog(kind, catalogItem) {
   const engine = getEngine()
   if (!engine || !editor.loaded) return
+
+  // 独占型节点（天气效果）：一份场景只放一份，重复点击直接选中已有的那个。
+  // 这类节点自己改场景雾效 / 背景色，放两份会互相打架。
+  if (catalogItem?.unique) {
+    const exists = editor.doc.nodes.find(
+      (n) => n.kind === kind && n.type === catalogItem.type,
+    )
+    if (exists) {
+      selectNode(exists.id)
+      return
+    }
+  }
+
   const node = createNode(kind, catalogItem)
   node.transform.position = engine.suggestPlacement(node)
   editor.doc.nodes.push(node)
@@ -198,6 +212,105 @@ export function updateNodeTransform(id, part, axisIndex, value) {
   if (!node || Number.isNaN(value)) return
   node.transform[part][axisIndex] = value
   getEngine()?.setNodeTransform(id, node.transform)
+}
+
+/* ============ 折点（能量管道 / datav 特效共用） ============ */
+
+const round1 = (v) => Math.round(v * 10) / 10
+const AXES = ['x', 'y', 'z']
+
+/** 保证节点有 >=2 个折点（旧文档 / 异常数据兜底） */
+function pathPoints(node) {
+  if (!node) return null
+  if (!Array.isArray(node.props.points) || node.props.points.length < 2) {
+    node.props.points = [
+      [0, 2, -6],
+      [0, 2, 6],
+    ]
+  }
+  return node.props.points
+}
+
+/** 该节点可用的折点预置（管道用 PIPE_SHAPE_PRESETS，波纹墙用 WALL_SHAPE_PRESETS） */
+function nodePresets(node) {
+  return findCatalog(node.kind, node.type)?.pointConfig?.presets || PIPE_SHAPE_PRESETS
+}
+
+/** 折点整体替换（数组来自面板的深拷贝） */
+export function updatePathPoints(id, points) {
+  const node = findNode(id)
+  if (!node) return
+  node.props.points = points.map((p) => [Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0])
+  getEngine()?.updateProps(id, node.props)
+}
+
+/** 单个折点的单轴数值 */
+export function updatePathPoint(id, index, axis, value) {
+  const node = findNode(id)
+  const points = pathPoints(node)
+  if (!points || !(points[index] && AXES.includes(axis)) || !Number.isFinite(value)) return
+  points[index][AXES.indexOf(axis)] = value
+  getEngine()?.updateProps(id, node.props)
+}
+
+/** 追加折点：沿最后一段方向延伸 8 单位，保持趋势不跳变 */
+export function addPathPoint(id) {
+  const node = findNode(id)
+  const points = pathPoints(node)
+  if (!points) return
+  const last = points[points.length - 1]
+  const prev = points[points.length - 2] || [0, 0, 0]
+  let dx = last[0] - prev[0]
+  let dy = last[1] - prev[1]
+  let dz = last[2] - prev[2]
+  let len = Math.hypot(dx, dy, dz)
+  if (len < 1e-4) {
+    dx = 0
+    dy = 0
+    dz = 8
+    len = 8
+  }
+  const step = 8 / len
+  const p = [round1(last[0] + dx * step), round1(last[1] + dy * step), round1(last[2] + dz * step)]
+  // 与上一点重合则不再追加
+  if (points.some((q) => Math.abs(q[0] - p[0]) < 1e-3 && Math.abs(q[1] - p[1]) < 1e-3 && Math.abs(q[2] - p[2]) < 1e-3)) {
+    return
+  }
+  points.push(p)
+  getEngine()?.updateProps(id, node.props)
+}
+
+/** 删除折点（至少保留 2 个） */
+export function removePathPoint(id, index) {
+  const node = findNode(id)
+  const points = pathPoints(node)
+  if (!points || points.length <= 2) return
+  points.splice(index, 1)
+  getEngine()?.updateProps(id, node.props)
+}
+
+/** 上移 / 下移某个折点 */
+export function movePathPoint(id, index, dir) {
+  const node = findNode(id)
+  const points = pathPoints(node)
+  if (!points) return
+  const to = index + dir
+  if (to < 0 || to >= points.length) return
+  const tmp = points[index]
+  points[index] = points[to]
+  points[to] = tmp
+  getEngine()?.updateProps(id, node.props)
+}
+
+/** 套用预置折点配置 */
+export function applyPathPreset(id, key) {
+  const node = findNode(id)
+  const points = pathPoints(node)
+  if (!points) return
+  const preset = nodePresets(node).find((p) => p.key === key)
+  if (!preset) return
+  node.props.points = preset.make()
+  getEngine()?.updateProps(id, node.props)
 }
 
 /* ============ 场景级设置 ============ */
@@ -287,6 +400,14 @@ export async function deleteAsset(assetId) {
   if (!window.confirm(tip)) return
   await db.assets.delete(assetId)
   await refreshAssets()
+}
+
+/**
+ * 取全部素材记录（含 blob）—— 导出场景时要把 glb 一起带走，列表界面只看元信息。
+ * @returns {Promise<{id:string,name:string,size:number,ts:number,blob:Blob}[]>}
+ */
+export async function getAssetRecords() {
+  return db.assets.orderBy('ts').toArray()
 }
 
 /* ============ 给 UI 用的小工具 ============ */

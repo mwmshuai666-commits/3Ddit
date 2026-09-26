@@ -12,8 +12,14 @@ import {
   updateBackground,
   setGroundType,
   removeNode,
+  updatePathPoint,
+  addPathPoint,
+  removePathPoint,
+  movePathPoint,
+  applyPathPreset,
 } from '../store/editor'
 import { findCatalog, findGroundCatalog } from '../schema/sceneSchema'
+import PointListEditor from './PointListEditor.vue'
 
 const isGround = computed(
   () => !editor.selectedId || editor.selectedId === GROUND_SELECTION,
@@ -26,6 +32,10 @@ const node = computed(() =>
 const nodeForm = computed(() =>
   node.value ? findCatalog(node.value.kind, node.value.type)?.form || [] : [],
 )
+/** 折点编辑器配置：能量管道 / 特效节点才有 */
+const pointConfig = computed(() =>
+  node.value ? findCatalog(node.value.kind, node.value.type)?.pointConfig || null : null,
+)
 const groundForm = computed(() => findGroundCatalog(editor.doc.scene.ground.type).form)
 const ground = computed(() => editor.doc.scene.ground)
 
@@ -35,6 +45,12 @@ const transformParts = [
   { key: 'scaling', label: '缩放', step: 0.1 },
 ]
 const axes = ['X', 'Y', 'Z']
+
+const KIND_TAGS = { light: '灯光', model: '模型', pipe: '管道', effect: '特效' }
+
+function kindTag(kind) {
+  return KIND_TAGS[kind] || '几何体'
+}
 
 function numInput(fn, evt, field) {
   const v = parseFloat(evt.target.value)
@@ -101,9 +117,7 @@ function numInput(fn, evt, field) {
     <!-- ===== 节点属性 ===== -->
     <template v-else-if="node">
       <div class="insp-title">
-        <span class="kind-tag" :class="node.kind">{{
-          node.kind === 'light' ? '灯光' : node.kind === 'model' ? '模型' : '几何体'
-        }}</span>
+        <span class="kind-tag" :class="node.kind">{{ kindTag(node.kind) }}</span>
         节点属性
       </div>
 
@@ -142,6 +156,17 @@ function numInput(fn, evt, field) {
         </div>
       </section>
 
+      <PointListEditor
+        v-if="node && pointConfig"
+        :node="node"
+        v-bind="pointConfig"
+        @point="(i, a, v) => updatePathPoint(node.id, i, a, v)"
+        @add="addPathPoint(node.id)"
+        @remove="(i) => removePathPoint(node.id, i)"
+        @move="(i, dir) => movePathPoint(node.id, i, dir)"
+        @preset="(key) => applyPathPreset(node.id, key)"
+      />
+
       <section v-if="nodeForm.length" class="insp-section">
         <h4>参数</h4>
         <div v-for="f in nodeForm" :key="f.key" class="form-row">
@@ -152,6 +177,22 @@ function numInput(fn, evt, field) {
             :value="node.props[f.key]"
             @input="updateNodeProps(node.id, f.key, $event.target.value)"
           />
+          <input
+            v-else-if="f.type === 'switch'"
+            type="checkbox"
+            :checked="!!node.props[f.key]"
+            @change="updateNodeProps(node.id, f.key, $event.target.checked)"
+          />
+          <select
+            v-else-if="f.type === 'select'"
+            class="select-input"
+            :value="node.props[f.key]"
+            @change="updateNodeProps(node.id, f.key, $event.target.value)"
+          >
+            <option v-for="o in f.options" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </option>
+          </select>
           <input
             v-else
             type="number"
@@ -207,6 +248,20 @@ function numInput(fn, evt, field) {
   background: #16352a;
   color: #7bd4a6;
 }
+.kind-tag.pipe {
+  background: #10314a;
+  color: #4fd8ff;
+}
+.kind-tag.effect {
+  background: #2a1f45;
+  color: #b48cff;
+}
+.form-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #3d8bff;
+  cursor: pointer;
+}
 .insp-section {
   margin-bottom: 16px;
 }
@@ -241,6 +296,18 @@ function numInput(fn, evt, field) {
   border: 1px solid #2a3346;
   border-radius: 5px;
   box-sizing: border-box;
+}
+.form-row .select-input {
+  width: 130px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: #d4dceb;
+  background: #151b28;
+  border: 1px solid #2a3346;
+  border-radius: 5px;
+  box-sizing: border-box;
+  cursor: pointer;
 }
 .form-row input[type='color'] {
   width: 44px;
@@ -346,6 +413,12 @@ function numInput(fn, evt, field) {
     linear-gradient(#4a5870 1.5px, transparent 1.5px),
     linear-gradient(90deg, #4a5870 1.5px, transparent 1.5px);
   background-size: 9px 9px;
+}
+.sw-digital {
+  background-color: #041018;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.9) 0, rgba(0, 229, 255, 0.15) 45%, transparent 60%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.55) 0 1px, transparent 1px 5px);
 }
 .delete-btn {
   width: 100%;

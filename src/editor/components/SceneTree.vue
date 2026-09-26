@@ -26,7 +26,11 @@ const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
       @click="selectNode(node.id)"
     >
       <span class="tree-icon" :class="node.kind">{{
-        node.kind === 'light' ? '☀' : node.kind === 'model' ? '⬢' : '▣'
+        node.kind === 'light' ? '☀'
+          : node.kind === 'model' ? '⬢'
+          : node.kind === 'pipe' ? '⚡'
+          : node.kind === 'effect' ? '✦'
+          : '▣'
       }}</span>
       <span class="tree-name">{{ node.name }}</span>
       <span class="tree-type">{{ node.type }}</span>
@@ -72,6 +76,12 @@ const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
 }
 .tree-icon.model {
   color: #7bd4a6;
+}
+.tree-icon.pipe {
+  color: #4fd8ff;
+}
+.tree-icon.effect {
+  color: #b48cff;
 }
 .tree-name {
   flex: 1;

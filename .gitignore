@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 播放器包（由 npm run sync:player 从 ../babylon-scene-player/dist 生成）
+public/player/

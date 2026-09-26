@@ -1,5 +1,6 @@
 <script setup>
 import { editor, setGizmoMode, frameSelected, saveNow, newScene } from '../store/editor'
+import ExportMenu from './ExportMenu.vue'
 
 const modes = [
   { key: 'translate', label: '移动', hotkey: 'W' },
@@ -41,6 +42,7 @@ function fmtTime(d) {
       {{ editor.saving ? '保存中…' : editor.savedAt ? `已自动保存 ${fmtTime(editor.savedAt)}` : '尚未保存' }}
     </div>
     <button class="tool-btn primary" @click="saveNow">保存</button>
+    <ExportMenu />
     <button class="tool-btn" @click="newScene">新建</button>
   </header>
 </template>

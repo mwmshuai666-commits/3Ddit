@@ -9,12 +9,19 @@ import {
   setGizmoMode,
   frameSelected,
   removeNode,
+  findNode,
   GROUND_SELECTION,
 } from './editor/store/editor'
-
 function isTyping(target) {
   const tag = target?.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable
+}
+
+/** 状态栏显示名称而不是内部 id */
+function selectedName() {
+  if (!editor.selectedId) return null
+  if (editor.selectedId === GROUND_SELECTION) return '场景底板'
+  return findNode(editor.selectedId)?.name || editor.selectedId
 }
 
 function onKeydown(e) {
@@ -55,10 +62,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     </div>
     <footer class="status-bar">
       <span>节点数：{{ editor.doc.nodes.length }}</span>
-      <span v-if="editor.selectedId && editor.selectedId !== GROUND_SELECTION">
-        已选中：{{ editor.selectedId }}
-      </span>
-      <span v-else-if="editor.selectedId === GROUND_SELECTION">已选中：场景底板</span>
+      <span v-if="selectedName()">已选中：{{ selectedName() }}</span>
       <div class="spacer"></div>
       <span class="hint">W 移动 · E 旋转 · R 缩放 · F 聚焦 · Delete 删除</span>
     </footer>
