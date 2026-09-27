@@ -11,6 +11,7 @@
  */
 
 import { GROUND_TEXTURE_FILES } from '../core/digitalGround.js'
+import { normalizeEnvironment } from '../schema/sceneSchema'
 
 /** 播放器全局包：由 scripts/sync-player.mjs 从 ../babylon-scene-player/dist 拷来 */
 export const PLAYER_BUNDLE_URL = `${import.meta.env.BASE_URL}player/standalone.iife.js`
@@ -50,7 +51,8 @@ export function safeFileName(name, used = new Set()) {
  * 生成导出用文档
  * @param {object} doc 编辑器当前文档
  * @param {{mode:'files'|'embedded', assets?:{id:string,name:string,blob:Blob}[]}} opts
- * @returns {Promise<{doc:object, assets:object[], missing:string[], warnings:string[]}>}
+ *        assets 是素材库全量记录（glb + hdr 都在里面）
+ * @returns {Promise<{doc:object, assets:object[], pack:object[], missing:string[], warnings:string[]}>}
  */
 export async function buildExportDoc(doc, { mode = 'files', assets = [] } = {}) {
   const byId = new Map(assets.map((a) => [a.id, a]))
@@ -83,6 +85,30 @@ export async function buildExportDoc(doc, { mode = 'files', assets = [] } = {}) 
     }
     out.push(entry)
     assetIndex.push(assets.indexOf(record))
+  }
+
+  // 环境贴图（hdr）：和模型同一套规则带走 —— 内嵌进 JSON 或单独放 assets/env/
+  const env = normalizeEnvironment(exported)
+  if (env && env.type === 'hdr' && env.assetId) {
+    const record = byId.get(env.assetId)
+    if (record?.blob) {
+      const entry = {
+        id: record.id,
+        name: record.name,
+        size: record.blob.size,
+        kind: 'hdr',
+      }
+      if (mode === 'embedded') {
+        entry.data = await blobToBase64(record.blob, record.name)
+      } else {
+        entry.file = `assets/env/${safeFileName(record.name, used)}`
+      }
+      out.push(entry)
+      assetIndex.push(assets.indexOf(record))
+    } else {
+      warnings.push('环境贴图素材已从素材库删除，导出的场景将回到无环境')
+      delete exported.scene.environment
+    }
   }
 
   if (missing.length) {
@@ -137,6 +163,25 @@ export async function fetchGroundTextureDataUrls() {
     throw new Error('数字地板贴图没找到（public/utils/digitalGround1~4.png）')
   }
   return urls
+}
+
+/**
+ * 播放器包里是否已经带上了数字地板四张贴图。
+ *
+ * 库 1.1 起把四张图 base64 内置进了产物（src/groundTextures.js），内联播放器时它们
+ * 已经在里面了，单文件 HTML 再嵌一遍纯属浪费 470KB。判断办法很土但很直接：
+ * 拿第一张贴图的 base64 开头一小段，看它在不在产物里。
+ * 只有用着旧构建（sync-player 拷的是老 dist）时才需要自己补。
+ */
+export async function playerBundleHasGroundTextures(bundleText) {
+  try {
+    const res = await fetch(GROUND_TEXTURE_URLS[0])
+    if (!res.ok) return false
+    const head = (await blobToBase64(await res.blob(), 'digitalGround1.png')).slice(0, 64)
+    return Boolean(head) && bundleText.includes(head)
+  } catch {
+    return false
+  }
 }
 
 /** 触发浏览器下载 */

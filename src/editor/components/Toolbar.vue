@@ -1,6 +1,8 @@
 <script setup>
 import { editor, setGizmoMode, frameSelected, saveNow, newScene } from '../store/editor'
 import ExportMenu from './ExportMenu.vue'
+import UserMenu from './UserMenu.vue'
+import Icon from './Icon.vue'
 
 const modes = [
   { key: 'translate', label: '移动', hotkey: 'W' },
@@ -18,9 +20,8 @@ function fmtTime(d) {
 <template>
   <header class="toolbar">
     <div class="brand">
-      <span class="brand-dot"></span>
+      <Icon name="box" :size="16" />
       数字孪生场景编辑器
-      <span class="brand-ver">P0</span>
     </div>
 
     <div class="tool-group">
@@ -41,7 +42,11 @@ function fmtTime(d) {
     <div class="save-status" :class="{ saving: editor.saving }">
       {{ editor.saving ? '保存中…' : editor.savedAt ? `已自动保存 ${fmtTime(editor.savedAt)}` : '尚未保存' }}
     </div>
-    <button class="tool-btn primary" @click="saveNow">保存</button>
+    <UserMenu />
+    <button class="tool-btn" @click="saveNow">
+      <Icon name="save" :size="13" />
+      保存
+    </button>
     <ExportMenu />
     <button class="tool-btn" @click="newScene">新建</button>
   </header>
@@ -49,88 +54,87 @@ function fmtTime(d) {
 
 <style scoped>
 .toolbar {
-  height: 48px;
+  height: var(--h-toolbar);
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  background: #11151d;
-  border-bottom: 1px solid #232a38;
+  gap: var(--s-2);
+  padding: 0 var(--s-4);
+  background: var(--c-panel);
+  border-bottom: 1px solid var(--c-line);
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  gap: var(--s-2);
+  font-size: var(--fs-lg);
   font-weight: 600;
-  color: #e6ecf5;
+  color: var(--t-strong);
+  white-space: nowrap;
 }
-.brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #4da3ff, #7b5bff);
-}
-.brand-ver {
-  font-size: 11px;
-  color: #7b89a3;
-  border: 1px solid #2f3a4e;
-  border-radius: 4px;
-  padding: 0 5px;
+.brand .icon {
+  color: var(--t-muted);
 }
 .tool-group {
   display: flex;
-  gap: 4px;
-  margin-left: 18px;
+  gap: var(--s-1);
+  margin-left: var(--s-4);
 }
 .tool-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 30px;
+  gap: var(--s-1);
+  height: var(--h-btn);
   padding: 0 10px;
-  font-size: 12px;
-  color: #c6d0e0;
-  background: #1a2030;
-  border: 1px solid #2a3346;
-  border-radius: 6px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--t-body);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .tool-btn:hover {
-  border-color: #3d8bff;
-  color: #fff;
+  border-color: var(--accent-line);
+  color: var(--t-strong);
+  background: var(--c-active);
 }
 .tool-btn.active {
-  background: #16345f;
-  border-color: #3d8bff;
-  color: #8fc0ff;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
 }
 .tool-btn.primary {
-  background: #1c56c8;
-  border-color: #2f6fe0;
-  color: #fff;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: transparent;
 }
 .tool-btn.primary:hover {
-  background: #2466e2;
+  background: var(--accent-hover);
+  border-color: transparent;
+  color: var(--on-accent);
 }
 kbd {
-  font-family: inherit;
-  font-size: 10px;
-  color: #7b89a3;
-  background: #0d111a;
-  border: 1px solid #2a3346;
-  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--t-muted);
+  background: var(--c-viewport);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-xs);
   padding: 0 4px;
+  line-height: 1.6;
 }
 .spacer {
   flex: 1;
 }
 .save-status {
-  font-size: 12px;
-  color: #6d7c96;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--t-muted);
+  white-space: nowrap;
 }
 .save-status.saving {
-  color: #c9a14e;
+  color: var(--warn);
 }
 </style>

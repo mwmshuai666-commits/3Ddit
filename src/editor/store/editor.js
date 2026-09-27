@@ -15,9 +15,12 @@ import {
   createDefaultDocument,
   createNode,
   createModelNode,
+  createHtmlNode,
   findCatalog,
   findGroundCatalog,
   genId,
+  ENV_DEFAULT_PROPS,
+  ENV_DOC_DEFAULT,
 } from '../schema/sceneSchema'
 
 class EditorDB extends Dexie {
@@ -98,6 +101,12 @@ export async function initEditor(canvas) {
       if (!asset) return null
       return new File([asset.blob], asset.name, { type: 'model/gltf-binary' })
     },
+    // 环境贴图同理：hdr blob 还原成 File 交给 HDRCubeTexture
+    resolveEnvFile: async (assetId) => {
+      const asset = await db.assets.get(assetId)
+      if (!asset || assetKind(asset) !== 'hdr') return null
+      return new File([asset.blob], asset.name, { type: 'image/vnd.radiance' })
+    },
   })
 
   await refreshAssets()
@@ -129,7 +138,15 @@ export async function initEditor(canvas) {
       assetLib,
       addFromCatalog,
       addModelInstance,
+      addHtmlPanel,
       uploadAsset,
+      uploadEnvAsset,
+      setEnvironmentAsset,
+      updateEnvironmentProp,
+      modelAssets,
+      envAssets,
+      getAssetRecords,
+      getEngine,
       saveNow,
       PRIMITIVE_CATALOG,
     }
@@ -163,6 +180,22 @@ export function addFromCatalog(kind, catalogItem) {
   editor.doc.nodes.push(node)
   engine.addNode(node)
   selectNode(node.id)
+}
+
+/**
+ * 左侧「HTML 元素导入」：把用户手写的 HTML 片段加进场景。
+ * @param {string} source HTML 源码
+ * @param {{width?:number, height?:number, mode?:'3d'|'billboard'}} size
+ */
+export function addHtmlPanel(source, size = {}) {
+  const engine = getEngine()
+  if (!engine || !editor.loaded) return null
+  const node = createHtmlNode(source || '', size)
+  node.transform.position = engine.suggestPlacement(node)
+  editor.doc.nodes.push(node)
+  engine.addNode(node)
+  selectNode(node.id)
+  return node.id
 }
 
 export function removeNode(id) {
@@ -339,7 +372,17 @@ export function newScene() {
   getEngine()?.loadDocument(fresh)
 }
 
-/* ============ 素材库（glb） ============ */
+/* ============ 素材库（glb 模型 + hdr 环境） ============ */
+
+/**
+ * 素材分两类，同一张表里用 kind 区分：
+ *   glb —— 模型，节点侧靠 props.assetId 引用
+ *   hdr —— 环境贴图，场景侧靠 scene.environment.assetId 引用
+ * 老库里没有 kind 字段，读出来统一当 glb（见 assetKind）。
+ */
+export function assetKind(record) {
+  return record?.kind === 'hdr' ? 'hdr' : 'glb'
+}
 
 async function getAssetMeta(id) {
   return db.assets.get(id)
@@ -354,15 +397,26 @@ export async function refreshAssets() {
   )
 }
 
+/** 素材库里的 glb 模型（左侧「模型自定义」一栏） */
+export function modelAssets() {
+  return assetLib.filter((a) => assetKind(a) === 'glb')
+}
+
+/** 素材库里的 hdr 环境贴图（左侧「环境天空盒」一栏） */
+export function envAssets() {
+  return assetLib.filter((a) => assetKind(a) === 'hdr')
+}
+
 /** 上传 glb 入素材库，入库后立即在场景中添加一个实例 */
 export async function uploadAsset(file) {
   if (!file) return
   if (!/\.glb$/i.test(file.name)) {
-    window.alert('目前仅支持 .glb 格式（gltf 请先在 Blender 中导出为 glb）')
+    window.alert('模型仅支持 .glb 格式（gltf 请先在 Blender 中导出为 glb）')
     return
   }
   const asset = {
     id: genId(),
+    kind: 'glb',
     name: file.name,
     size: file.size,
     ts: Date.now(),
@@ -371,6 +425,26 @@ export async function uploadAsset(file) {
   await db.assets.put(asset)
   await refreshAssets()
   await addModelInstance(asset.id)
+}
+
+/** 上传 hdr 入素材库（只入库，场景用不用要用户点一下） */
+export async function uploadEnvAsset(file) {
+  if (!file) return
+  if (!/\.hdr$/i.test(file.name)) {
+    window.alert('环境贴图仅支持 .hdr 格式（RGBE / .hdr，Poly Haven 上有一堆）')
+    return
+  }
+  const record = {
+    id: genId(),
+    kind: 'hdr',
+    name: file.name,
+    size: file.size,
+    ts: Date.now(),
+    blob: file,
+  }
+  await db.assets.put(record)
+  await refreshAssets()
+  return record
 }
 
 /** 从素材库添加一个模型实例到当前场景 */
@@ -389,15 +463,52 @@ export async function addModelInstance(assetId) {
   selectNode(node.id)
 }
 
+/** 把某个 hdr 设成当前场景的环境（assetId 传 null = 恢复成无环境） */
+export async function setEnvironmentAsset(assetId) {
+  const engine = getEngine()
+  if (!engine) return
+  if (!assetId) {
+    editor.doc.scene.environment = { ...ENV_DOC_DEFAULT, props: { ...ENV_DEFAULT_PROPS } }
+    engine.setEnvironment(null)
+    markDirty()
+    return
+  }
+  const asset = await getAssetMeta(assetId)
+  if (!asset) return
+  editor.doc.scene.environment = {
+    type: 'hdr',
+    assetId: asset.id,
+    assetName: asset.name,
+    props: { ...ENV_DEFAULT_PROPS },
+  }
+  const file = new File([asset.blob], asset.name, { type: 'image/vnd.radiance' })
+  engine.setEnvironment({ id: asset.id, name: asset.name, file })
+  markDirty()
+}
+
+/** 改环境参数（强度 / 旋转 / 天空盒开关） */
+export function updateEnvironmentProp(key, value) {
+  const env = editor.doc.scene.environment
+  if (!env || env.type !== 'hdr') return
+  env.props = { ...ENV_DEFAULT_PROPS, ...env.props, [key]: value }
+  getEngine()?.setEnvironmentProps(env.props)
+  markDirty()
+}
+
 /** 删除素材（已放进场景的实例不受影响，但刷新后该节点将无法再加载） */
 export async function deleteAsset(assetId) {
-  const used = editor.doc.nodes.some(
+  const usedAsModel = editor.doc.nodes.some(
     (n) => n.kind === 'model' && n.props.assetId === assetId,
   )
-  const tip = used
-    ? '该模型已在场景中使用：删除素材后，下次打开场景这些实例将无法加载。确定删除？'
-    : '确定从素材库删除该模型？'
+  const usedAsEnv = editor.doc.scene?.environment?.assetId === assetId
+  const tips = []
+  if (usedAsModel) tips.push('该模型已在场景中使用，下次打开场景这些实例将无法加载')
+  if (usedAsEnv) tips.push('它正是当前场景的环境贴图，删掉就回到无环境')
+  const tip = tips.length
+    ? `${tips.join('；')}。确定删除？`
+    : '确定从素材库删除该素材？'
   if (!window.confirm(tip)) return
+  if (usedAsEnv) await setEnvironmentAsset(null)
   await db.assets.delete(assetId)
   await refreshAssets()
 }

@@ -2,11 +2,17 @@
 import { ref, watch } from 'vue'
 import LibraryPanel from './LibraryPanel.vue'
 import SceneTree from './SceneTree.vue'
+import Icon from './Icon.vue'
 
 const COLLAPSE_KEY = 'twinEditor.leftPanelCollapsed'
 
 const tab = ref('library')
 const collapsed = ref(localStorage.getItem(COLLAPSE_KEY) === '1')
+
+const TABS = [
+  { key: 'library', label: '搭建', icon: 'layers' },
+  { key: 'tree', label: '层级', icon: 'tree' },
+]
 
 /** 点标签：折叠状态下先展开，再切到对应页 */
 function open(next) {
@@ -30,18 +36,20 @@ watch(collapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
         :title="collapsed ? '展开面板' : '折叠面板'"
         @click="toggle"
       >
-        {{ collapsed ? '»' : '«' }}
+        <Icon name="panelLeft" :size="14" class="flip" :class="{ flipped: collapsed }" />
       </button>
     </div>
 
     <div class="panel-tabs">
-      <button :class="{ active: tab === 'library' }" @click="open('library')">
-        <span class="tab-short">搭</span>
-        <span class="tab-text">搭建</span>
-      </button>
-      <button :class="{ active: tab === 'tree' }" @click="open('tree')">
-        <span class="tab-short">层</span>
-        <span class="tab-text">层级</span>
+      <button
+        v-for="t in TABS"
+        :key="t.key"
+        :class="{ active: tab === t.key }"
+        :title="t.label"
+        @click="open(t.key)"
+      >
+        <Icon :name="t.icon" :size="15" />
+        <span class="tab-text">{{ t.label }}</span>
       </button>
     </div>
 
@@ -55,75 +63,95 @@ watch(collapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
 <style scoped>
 .left-panel {
   position: relative;
-  width: 264px;
+  width: var(--w-panel);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: #0e131d;
-  border-right: 1px solid #232a38;
-  transition: width 0.18s ease;
+  background: var(--c-panel);
+  border-right: 1px solid var(--c-line);
+  transition: width var(--dur) var(--ease);
 }
 .left-panel.collapsed {
-  width: 46px;
+  width: var(--h-toolbar);
 }
 .panel-topbar {
   display: flex;
   align-items: center;
-  height: 26px;
+  height: var(--h-status);
   flex-shrink: 0;
-  padding: 0 6px;
-  border-bottom: 1px solid #232a38;
+  padding: 0 var(--s-2);
+  border-bottom: 1px solid var(--c-line);
 }
 .topbar-title {
-  font-size: 11px;
-  color: #55617a;
-  letter-spacing: 0.5px;
+  font-size: var(--fs-2xs);
+  color: var(--t-faint);
+  letter-spacing: 0.06em;
 }
 .collapse-btn {
-  width: 22px;
-  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--h-btn);
+  height: var(--h-ctrl);
   margin-left: auto;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: #8293ad;
-  font-size: 12px;
-  line-height: 1;
+  color: var(--t-muted);
   cursor: pointer;
 }
 .collapse-btn:hover {
-  color: #9ecbff;
-  background: #1a2233;
+  color: var(--t-strong);
+  background: var(--c-active);
+}
+/* 折叠态翻转箭头方向，指向「要展开的方向」 */
+.flip {
+  transition: transform var(--dur) var(--ease);
+}
+.flip.flipped {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .left-panel,
+  .flip {
+    transition: none;
+  }
 }
 .panel-tabs {
   display: flex;
-  height: 38px;
+  height: var(--h-row);
   flex-shrink: 0;
-  border-bottom: 1px solid #232a38;
+  border-bottom: 1px solid var(--c-line);
 }
 .panel-tabs button {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
   border: none;
   background: transparent;
-  color: #8b98b0;
-  font-size: 13px;
+  color: var(--t-muted);
+  font-size: var(--fs-sm);
+  font-family: inherit;
   cursor: pointer;
   border-bottom: 2px solid transparent;
 }
-.panel-tabs button.active {
-  color: #9ecbff;
-  border-bottom-color: #3d8bff;
-  background: #111927;
+.panel-tabs button:hover {
+  color: var(--t-body);
+  background: var(--c-raised);
 }
-.panel-tabs .tab-short {
-  display: none;
-  font-size: 13px;
+.panel-tabs button.active {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
 }
 .panel-body {
   flex: 1;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .panel-body > * {
   flex: 1;
@@ -146,18 +174,15 @@ watch(collapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
 }
 .left-panel.collapsed .panel-tabs button {
   flex: none;
-  height: 44px;
-  border-bottom: 1px solid #1b2333;
+  height: var(--h-row);
+  border-bottom: 1px solid var(--c-line);
   border-left: 2px solid transparent;
 }
 .left-panel.collapsed .panel-tabs button.active {
-  border-left-color: #3d8bff;
-  border-bottom-color: #1b2333;
+  border-left-color: var(--accent);
+  border-bottom-color: var(--c-line);
 }
 .left-panel.collapsed .tab-text {
   display: none;
-}
-.left-panel.collapsed .tab-short {
-  display: inline;
 }
 </style>

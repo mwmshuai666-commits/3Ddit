@@ -31,7 +31,7 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-width: 0;
-  background: #05070d;
+  background: var(--c-viewport);
 }
 canvas {
   display: block;
@@ -42,10 +42,11 @@ canvas {
 }
 .viewport-hint {
   position: absolute;
-  left: 12px;
-  bottom: 10px;
-  font-size: 12px;
-  color: #5d6b85;
+  left: var(--s-4);
+  bottom: var(--s-2);
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  color: var(--t-faint);
   pointer-events: none;
   user-select: none;
 }

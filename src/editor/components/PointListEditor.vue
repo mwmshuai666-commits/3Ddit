@@ -3,6 +3,8 @@
  * 折点配置编辑器：能量管道 / babylon-datav 特效（柔性管道、流光线、飞线、波纹墙）共用。
  * 具体节点能配几个坐标、最多几个点、有哪些预置，都由 schema 里的 pointConfig 决定。
  */
+import Icon from './Icon.vue'
+
 const props = defineProps({
   /** 当前选中的节点（读取 node.props.points） */
   node: { type: Object, required: true },
@@ -63,152 +65,160 @@ const canRemove = () => pointCount() > 2
         @input="onAxisInput(i, a, $event)"
       />
       <span class="pt-ops">
-        <button title="上移" :disabled="i === 0" @click="emit('move', i, -1)">↑</button>
+        <button title="上移" :disabled="i === 0" @click="emit('move', i, -1)">
+          <Icon name="chevron" :size="12" class="up" />
+        </button>
         <button
           title="下移"
           :disabled="i === pointCount() - 1"
           @click="emit('move', i, 1)"
         >
-          ↓
+          <Icon name="chevron" :size="12" />
         </button>
-        <button title="删除折点" :disabled="canRemove()" @click="emit('remove', i)">×</button>
+        <button title="删除折点" :disabled="canRemove()" @click="emit('remove', i)">
+          <Icon name="trash" :size="12" />
+        </button>
       </span>
     </div>
 
     <button class="add-point" :disabled="!canAdd()" @click="emit('add')">
-      {{ maxPoints > 0 && pointCount() >= maxPoints ? `最多 ${maxPoints} 个折点` : '+ 添加折点' }}
+      <Icon name="plus" :size="13" />
+      {{ maxPoints > 0 && pointCount() >= maxPoints ? `最多 ${maxPoints} 个折点` : '添加折点' }}
     </button>
   </section>
 </template>
 
 <style scoped>
 .h4-hint {
-  margin-left: 6px;
+  margin-left: var(--s-2);
   font-weight: 400;
-  color: #55617a;
+  color: var(--t-faint);
   text-transform: none;
   letter-spacing: 0;
 }
 .preset-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
-  margin-bottom: 9px;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
 }
+/* 预置胶囊：全站唯一的强调色用法（选中级操作），不再有第二种蓝 */
 .preset-btn {
-  height: 24px;
-  padding: 0 9px;
-  font-size: 11px;
-  color: #9ecbff;
-  background: #13274a;
-  border: 1px solid #2d4a75;
-  border-radius: 12px;
+  height: var(--h-ctrl);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .preset-btn:hover {
-  color: #fff;
-  border-color: #5a9bff;
-  background: #163156;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .pt-head,
 .pt-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-1);
 }
 .pt-head {
-  margin-bottom: 4px;
-  font-size: 10px;
+  margin-bottom: var(--s-1);
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 .pt-idx {
   width: 16px;
   flex-shrink: 0;
-  font-size: 10px;
-  color: #55617a;
+  font-size: var(--fs-2xs);
+  color: var(--t-faint);
   text-align: center;
 }
+/* 轴标靠 X/Y/Z 字母区分，收回 RGB 糖果色：颜色只表达状态 */
 .pt-axis {
   flex: 1;
   text-align: center;
-}
-.pt-axis.x {
-  color: #ff6b6b;
-}
-.pt-axis.y {
-  color: #6bff9e;
-}
-.pt-axis.z {
-  color: #6bb5ff;
+  color: var(--t-muted);
 }
 .pt-ops {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
 }
+/* 上 / 下移共用一个 chevron，靠旋转区分方向（不引入第二种字形） */
+.pt-ops .up {
+  transform: rotate(180deg);
+}
 .pt-ops button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 22px;
   padding: 0;
-  font-size: 11px;
-  line-height: 1;
-  color: #8293ad;
-  background: #151b28;
-  border: 1px solid #2a3346;
-  border-radius: 4px;
+  color: var(--t-muted);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .pt-ops button:hover:not(:disabled) {
-  color: #fff;
-  border-color: #3d8bff;
+  color: var(--t-strong);
+  border-color: var(--accent);
 }
 .pt-ops button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .pt-ops button:last-child:hover:not(:disabled) {
-  color: #ff8a8a;
-  border-color: #55303a;
+  color: var(--danger);
+  border-color: var(--danger-line);
 }
 .pt-row {
-  margin-bottom: 4px;
+  margin-bottom: var(--s-1);
 }
 .pt-row input {
   flex: 1;
   min-width: 0;
-  height: 24px;
+  height: var(--h-ctrl);
   padding: 0 3px;
-  font-size: 11px;
-  color: #d4dceb;
-  background: #151b28;
-  border: 1px solid #2a3346;
-  border-radius: 5px;
+  font-size: var(--fs-xs);
+  color: var(--t-strong);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   box-sizing: border-box;
 }
 .pt-row input:focus {
   outline: none;
-  border-color: #3d8bff;
+  border-color: var(--accent);
 }
 .add-point:disabled {
-  color: #55617a;
-  border-color: #232a38;
-  background: #10141d;
+  color: var(--t-faint);
+  border-color: var(--c-line);
+  background: var(--c-app);
   cursor: not-allowed;
 }
 .add-point {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
   width: 100%;
-  height: 26px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: #9ecbff;
-  background: #111927;
-  border: 1px dashed #3d6fb5;
-  border-radius: 6px;
+  height: var(--h-btn);
+  margin-top: var(--s-1);
+  font-size: var(--fs-xs);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .add-point:hover {
-  color: #fff;
-  background: #163156;
-  border-color: #5a9bff;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 </style>

@@ -1,4 +1,115 @@
-/* 全局基底：数字孪生场景编辑器（暗色） */
+/* ==========================================================================
+   全局基底：数字孪生场景编辑器（暗色 · 专业工具风）
+   --------------------------------------------------------------------------
+   设计原则（对齐 VS Code / Blender，不对齐落地页）：
+     1. 颜色只表达「状态」，不表达「种类」—— 全站只有一个强调色，
+        节点类型靠图标形状区分，不再给每类一种糖果色；
+     2. 分区一律用 1px 发丝线，不加阴影（唯一例外是浮层，见 --shadow-pop）；
+     3. 全站零渐变；
+     4. 字阶 5 档 / 圆角 3 档 / 控件高 3 档 / 间距 5 档，不许多取值。
+
+   这里的自定义属性是全站唯一的取色来源。组件里不要再写 hex，
+   新加颜色先问一遍「这是状态还是种类」—— 是种类就改成图标形状。
+
+   两个**故意**不走 token 的例外，换肤时别动：
+     · src/editor/styles/swatches.css  地面预览漆要跟 3D 里真实材质对得上；
+     · core/htmlPanel.js 里 canvas 绘制的几个颜色  canvas 读不到 CSS 变量。
+   ========================================================================== */
+
+/**
+ * 地面材质的预览漆。单独一个文件、在**所有规则之前**引入，是为了让
+ * LibraryPanel 和 Inspector 共用同一份（见文件内注释：色值故意做成硬编码）。
+ *
+ * ⚠️ @import 必须排在文件最前面（CSS 规定它前面只能有 @charset/@layer）。
+ * 写在末尾 postcss 会**静默丢掉整个文件**，表现是两侧的预览小色块变成空框，
+ * 而且构建只报一句 warning，不报错。
+ */
+@import './editor/styles/swatches.css';
+
+:root {
+  /* ---- 背景阶梯：视口最暗 → 浮层最亮 ---- */
+  --c-viewport: #0a0c10; /* 3D 画布（比 app 更深，和工具界面拉开） */
+  --c-app: #101318; /* 编辑器最底层 */
+  --c-panel: #14171e; /* 左右侧栏 / 工具栏 / 状态栏 */
+  --c-raised: #1b1f27; /* 输入框、按钮、行 hover */
+  --c-active: #232834; /* 选中 / 按下 */
+  --c-pop: #191d25; /* 下拉、浮层 */
+
+  /* ---- 发丝线（分区唯一手段） ---- */
+  --c-line: #232833; /* chrome 边界：工具栏/侧栏/状态栏之间 */
+  --c-line-strong: #2f3644 /* 控件描边、输入框边框 */;
+
+  /* ---- 文字：原来的 8 个近似灰收敛成 4 档 ---- */
+  --t-strong: #e9edf4; /* 标题、强 */
+  --t-body: #adb7c7; /* 正文 */
+  --t-muted: #7a8497; /* 次级说明 */
+  --t-faint: #5b6474; /* 占位、空态、最弱 */
+
+  /* ---- 唯一强调色：只用于选中 / 聚焦 / 主按钮 ---- */
+  --accent: #4c8dee;
+  --accent-hover: #6a9ff2;
+  --accent-soft: rgb(76 141 238 / 16%);
+  --accent-line: rgb(76 141 238 / 45%);
+  --on-accent: #fff;
+
+  /* ---- 状态色：只用于状态栏 / toast / 校验提示 ---- */
+  --ok: #4aa97b;
+  --warn: #cf9f3a;
+  --danger: #d4655f;
+  --ok-soft: rgb(74 169 123 / 14%);
+  --warn-soft: rgb(207 159 58 / 14%);
+  --danger-soft: rgb(212 101 95 / 14%);
+  /* 同色的描边档：满色当边框太呛，统一压到 35% */
+  --ok-line: rgb(74 169 123 / 35%);
+  --warn-line: rgb(207 159 58 / 35%);
+  --danger-line: rgb(212 101 95 / 35%);
+
+  /* ---- 圆角：3 档 ---- */
+  --r-xs: 3px; /* kbd、小角标 */
+  --r-sm: 4px; /* 输入框、按钮 */
+  --r-md: 6px; /* 卡片容器、浮层 */
+
+  /* ---- 间距：5 档 ---- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+
+  /* ---- 字阶：5 档 ---- */
+  --fs-2xs: 10px; /* 最辅助：类型标签、轴标、kbd */
+  --fs-xs: 11px; /* 分组标题、状态栏、提示 */
+  --fs-sm: 12px; /* 控件、列表项、正文 */
+  --fs-md: 13px; /* 面板标题 */
+  --fs-lg: 15px; /* 品牌名 */
+
+  /* ---- 控件高度：3 档 ---- */
+  --h-ctrl: 24px; /* 密集行内的输入框 */
+  --h-btn: 26px; /* 常规按钮 */
+  --h-btn-lg: 30px; /* 主按钮 */
+  --h-row: 32px; /* 列表行 */
+
+  /* ---- 结构尺寸 ---- */
+  --h-toolbar: 46px;
+  --h-status: 26px;
+  --w-panel: 272px;
+
+  /* ---- 层级 ---- */
+  --z-pop: 40; /* 下拉浮层 */
+  --z-toast: 39; /* 自消提示 */
+  --z-modal: 60; /* 登录框 / 确认框 */
+  --z-mask: 59; /* 遮罩（比 modal 低一档） */
+
+  /* ---- 动效：2 档 ---- */
+  --dur: 160ms;
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+
+  --font-sans: system-ui, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+
+  /* ---- 全站唯一一处阴影：浮层需要和页面分层 ---- */
+  --shadow-pop: 0 12px 32px rgb(0 0 0 / 45%);
+}
 
 * {
   box-sizing: border-box;
@@ -11,15 +122,11 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #0a0e16;
-  color: #c6d0e0;
-  font-family:
-    system-ui,
-    'Segoe UI',
-    'Microsoft YaHei',
-    Roboto,
-    sans-serif;
-  font-size: 13px;
+  background: var(--c-app);
+  color: var(--t-body);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -34,6 +141,47 @@ body {
 
 button {
   font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* 表单控件基样式：各组件仍可覆盖，但不再需要每处写一遍三件套 */
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  color: var(--t-body);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--t-faint);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--c-active);
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--t-faint);
+  cursor: default;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--t-strong);
 }
 
 /* 细滚动条 */
@@ -42,11 +190,11 @@ button {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3346;
-  border-radius: 4px;
+  background: var(--c-line-strong);
+  border-radius: var(--r-sm);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a475f;
+  background: var(--t-faint);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -61,4 +209,19 @@ input[type='number']::-webkit-inner-spin-button {
 input[type='number'] {
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* 尊重系统的「减少动态效果」 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* 数字输入统一等宽位宽：拖动 / 输入时数字宽度不跳，行不会左右抖 */
+input[type='number'] {
+  font-variant-numeric: tabular-nums;
 }

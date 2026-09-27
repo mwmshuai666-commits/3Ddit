@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# 环境变量。默认 *.local 只盖住 .env.local，.env / .env.production 会被误提交上去，
+# 里面可能放着接口地址甚至密钥。统一忽略整个 .env*，只放行模板。
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

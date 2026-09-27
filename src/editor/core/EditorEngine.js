@@ -27,6 +27,7 @@ import {
   StandardMaterial,
   DynamicTexture,
   Texture,
+  HDRCubeTexture,
   PointerEventTypes,
   UtilityLayerRenderer,
   PositionGizmo,
@@ -36,6 +37,7 @@ import {
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { registerBuiltInLoaders } from '@babylonjs/loaders/dynamic'
 import { findCatalog } from '../schema/sceneSchema'
+import { ENV_DEFAULT_PROPS } from '../schema/sceneSchema'
 import {
   createPipeVisual,
   disposePipeVisual,
@@ -45,12 +47,23 @@ import {
   setPipeParticles,
 } from './pipeBuilder'
 import { createDigitalGround, disposeDigitalGround, updateDigitalGroundProps } from './digitalGround'
+import { createHtmlPanel } from './htmlPanel'
 
 registerBuiltInLoaders() // glTF / glb / obj 等解析器注册到 SceneLoader
 
 const DEG2RAD = Math.PI / 180
 const RAD2DEG = 180 / Math.PI
 const EDGE_COLOR = new Color3(1, 0.84, 0.25)
+
+/** HDR 环境：立方体边长。256 对天空盒够细，预滤波又不至于卡住浏览器 */
+const ENV_SIZE = 256
+/** 必须留 mipmap：天空盒模糊靠的是采样低级别 mip，没 mip 的话模糊度调了没反应 */
+const ENV_NO_MIPMAP = false
+const ENV_PREFILTER = true
+/** 贴图加载超时（ms）：大 HDR + 软件渲染时会慢，但不能一直挂着 */
+const ENV_TIMEOUT = 60000
+/** 天空盒盒体尺寸：够大不大就行，反正是 infiniteDistance，永远碰不到 */
+const SkyboxSize = 1000
 
 const round3 = (v) => Math.round(v * 1000) / 1000
 
@@ -66,6 +79,9 @@ function groundOffsetY(type, props) {
       return props.diameter / 2
     case 'torus':
       return props.thickness
+    case 'html':
+      // HTML 面板的平面中心在 wrapper 原点，抬高半个高度才是「贴地挂着」
+      return (Number(props.height) || 2.4) / 2
     default:
       return 0
   }
@@ -80,6 +96,7 @@ export default class EditorEngine {
     this.cb = callbacks
     this.entries = new Map() // nodeId -> { wrapper, object, material, kind, type }
     this.groundEntry = null
+    this.envEntry = null
     this._selectedId = null
     this._gizmoMode = 'translate'
     this._disposed = false
@@ -217,17 +234,18 @@ export default class EditorEngine {
     this.scene.clearColor = Color3.FromHexString(doc.scene.background || '#05070d').toColor4(1)
 
     // 模型节点异步加载（blob 由 store 层从素材库解析），互不阻塞
-    await Promise.all(
-      doc.nodes.map(async (node) => {
-        if (node.kind === 'model') {
-          const file = await this.cb.resolveModelFile?.(node.props.assetId)
-          if (file) await this.addModelNode(node, file, { dropToGround: false })
-          else this._addEmptyModel(node)
-        } else {
-          this._instantiate(node)
-        }
-      }),
-    )
+    const pending = doc.nodes.map(async (node) => {
+      if (node.kind === 'model') {
+        const file = await this.cb.resolveModelFile?.(node.props.assetId)
+        if (file) await this.addModelNode(node, file, { dropToGround: false })
+        else this._addEmptyModel(node)
+      } else {
+        this._instantiate(node)
+      }
+    })
+    // 环境贴图一起加载：HDR 预滤波要几秒，别把它插在中间串行等
+    pending.push(this._restoreEnvironment(doc.scene.environment))
+    await Promise.all(pending)
 
     // 相机取景：按地面大小给一个合理的初始视角
     const size = doc.scene.ground.props.size || 200
@@ -355,6 +373,114 @@ export default class EditorEngine {
     this._groundSeconds = 0
   }
 
+  /* ============ 环境（HDR 天空盒 / IBL） ============ */
+
+  /**
+   * 换 / 关全局环境。source 传 null = 回到无环境（背景只剩 clearColor 纯色）。
+   *
+   * HDR 走 blob objectURL → HDRCubeTexture：用 URL 而不是 base64，
+   * 因为 HDR 动不动几 MB，塞进内存字符串再解码纯属浪费（glb 那边同理）。
+   *
+   * @param {{id:string,name:string,file:Blob}|null} source
+   * @returns {Promise<boolean>} 是否加载成功（false 时场景保持原样）
+   */
+  async setEnvironment(source) {
+    const props = source?.props
+    if (!source?.file) {
+      this._disposeEnvironment()
+      return false
+    }
+
+    const url = URL.createObjectURL(source.file)
+    const texture = await loadHdrTexture(url, this.scene, source.name)
+    if (!texture || this._disposed) {
+      texture?.dispose()
+      URL.revokeObjectURL(url)
+      if (texture) console.error('[EditorEngine] 引擎已释放，放弃环境贴图', source.name)
+      return false
+    }
+
+    // 成功了再拆旧的，避免换一张失败把原来那套也弄丢了
+    this._disposeEnvironment()
+    this.envEntry = { texture, url, props: { ...ENV_DEFAULT_PROPS, ...(props || {}) } }
+    this._applyEnvironment(this.envEntry.props)
+    return true
+  }
+
+  /** 改环境参数：强度 / 旋转 / 模糊 / 天空盒开关。强度、旋转、开关都是即时生效；
+    模糊要重建天空盒材质，所以只有这一项真的拆东西 */
+  setEnvironmentProps(props) {
+    if (!this.envEntry) return
+    this.envEntry.props = { ...ENV_DEFAULT_PROPS, ...this.envEntry.props, ...(props || {}) }
+    this._applyEnvironment(this.envEntry.props)
+  }
+
+  _applyEnvironment(props) {
+    const entry = this.envEntry
+    if (!entry) return
+    const { texture } = entry
+
+    // 旋转CubeTexture 的 rotationY 就行——scene.environmentRotationY 在 Babylon 里不存在
+    texture.rotationY = ((Number(props.rotation) || 0) * Math.PI) / 180
+
+    if (props.skybox === false) {
+      if (entry.skybox) {
+        entry.skybox.dispose()
+        entry.skybox = null
+      }
+      this.scene.environmentTexture = null
+      this.scene.environmentIntensity = 1
+      return
+    }
+
+    // 模糊度只影响天空盒，不影响环境光照
+    const blur = Math.max(0, Math.min(1, Number(props.blur) || 0))
+    if (entry.blurApplied !== blur) {
+      entry.skybox?.dispose()
+      entry.skybox = null
+      entry.blurApplied = blur
+    }
+
+    if (!entry.skybox) {
+      // createDefaultSkybox 传 pbr=true 才有模糊：它内部是 PBRMaterial，
+      // microSurface = 1 - blur 决定采样哪一级 mip。自带 isPickable=false /
+      // infiniteDistance / ignoreCameraMaxZ，不会挡住点选
+      entry.skybox = this.scene.createDefaultSkybox(texture, true, SkyboxSize, blur, false)
+    }
+    entry.skybox.setEnabled(true)
+    this.scene.environmentTexture = texture
+    // environmentIntensity 只压 IBL（间接光），天空盒本身多亮不受它影响
+    this.scene.environmentIntensity = Math.max(0, Number(props.intensity) || 1)
+  }
+
+  _disposeEnvironment() {
+    const entry = this.envEntry
+    this.envEntry = null
+    entry?.skybox?.dispose()
+    entry?.texture?.dispose()
+    if (entry?.url) URL.revokeObjectURL(entry.url)
+  }
+
+  /** 读档：按 scene.environment 还原环境（素材被删了就安静地回到无环境） */
+  async _restoreEnvironment(env) {
+    if (!env || env.type !== 'hdr' || !env.assetId) {
+      this._disposeEnvironment()
+      return
+    }
+    const file = await this.cb.resolveEnvFile?.(env.assetId)
+    if (!file) {
+      this._disposeEnvironment()
+      return
+    }
+    const ok = await this.setEnvironment({
+      id: env.assetId,
+      name: env.assetName || '',
+      file,
+      props: env.props,
+    })
+    if (!ok) this._disposeEnvironment()
+  }
+
   /* ============ 节点实例化 ============ */
 
   addNode(node) {
@@ -466,6 +592,14 @@ export default class EditorEngine {
       // 网格由 DatavEffect.vue 挂载的 babylon-datav 组件创建，
       // 就绪后通过 attachEffectMesh 回填 entry.object
       entry.effectMesh = findCatalog(node.kind, node.type)?.meshName || null
+    } else if (node.kind === 'html') {
+      // HTML 面板：createHtmlPanel 内部异步栅格化，这里先把网格建出来，
+      // 内容画好之前是一块透明的（editor / player 两条路径都一样）
+      entry.panel = createHtmlPanel(this.scene, node.props)
+      entry.object = entry.panel.mesh
+      entry.material = entry.panel.material
+      entry.object.parent = wrapper
+      entry.object.metadata = { nodeId: node.id }
     }
 
     this._applyTransform(wrapper, node.transform)
@@ -635,6 +769,9 @@ export default class EditorEngine {
       entry.particleSpeed = Number(props.particleSpeed) || 0
     } else if (entry.kind === 'effect') {
       this._applyEffectProps()
+    } else if (entry.kind === 'html') {
+      // update 内部会判断「尺寸 / 朝向 / HTML 内容有没有真变」，重复调用不重画
+      entry.panel?.update(props)
     }
   }
 
@@ -693,6 +830,10 @@ export default class EditorEngine {
       // 网格由 Vue 组件卸载时释放；这里只解除选中态的包围盒
       if (entry.object) entry.object.showBoundingBox = false
       entry.object?.dispose()
+    } else if (entry.kind === 'html') {
+      entry.panel?.dispose()
+      entry.object = null
+      entry.material = null
     } else {
       entry.object?.dispose()
       if (entry.kind === 'primitive') entry.material?.dispose()
@@ -765,6 +906,9 @@ export default class EditorEngine {
 
   _setEntryHighlight(entry, on) {
     if (entry.kind === 'primitive' && entry.object) {
+      this._setMeshHighlight(entry.object, on)
+    } else if (entry.kind === 'html' && entry.object) {
+      // 面板描边会被 DynamicTexture 的透明区域吃掉一部分，但足够看出选中
       this._setMeshHighlight(entry.object, on)
     } else if (entry.kind === 'pipe' && entry.visual) {
       this._setPipeHighlight(entry.visual, on)
@@ -847,7 +991,7 @@ export default class EditorEngine {
     this.camera.target.set(p.x, Math.max(p.y, 1), p.z)
 
     let bounds = null
-    if (entry.kind === 'primitive') {
+    if (entry.kind === 'primitive' || entry.kind === 'html') {
       bounds = entry.object.getHierarchyBoundingVectors?.()
     } else if (entry.kind === 'pipe' && entry.visual?.tube) {
       bounds = entry.visual.tube.getHierarchyBoundingVectors?.()
@@ -879,8 +1023,57 @@ export default class EditorEngine {
     this._resizeObserver?.disconnect()
     this._resizeObserver = null
     this.engine.getRenderingCanvas()?.removeEventListener('pointerup', this._onCanvasPointerUp)
+    this._disposeEnvironment()
     this.engine.stopRenderLoop()
     this.scene.dispose()
     this.engine.dispose()
   }
+}
+
+/**
+ * 建 HDRCubeTexture 并等它加载 + 预滤波完，失败返回 null。
+ *
+ * 两个坑都踩过：
+ *  - HDRCubeTexture 没有 onErrorObservable，错误只能从构造函数的 onError 回调拿；
+ *  - 命中缓存时 onLoad 也是 SetImmediate 触发的，不能构造完直接读 isReady()。
+ * 所以留了个超时兜底：谁都不回调就只问一次状态，绝不无限挂着。
+ *
+ * @param {string} url hdr 地址（blob objectURL 或普通 URL）
+ * @param {import('@babylonjs/core').Scene} scene
+ * @param {string} name 出错时好知道是哪张图
+ * @returns {Promise<import('@babylonjs/core').HDRCubeTexture|null>}
+ */
+function loadHdrTexture(url, scene, name) {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer = null
+    let tex = null
+    const done = (result) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(result)
+    }
+    try {
+      tex = new HDRCubeTexture(
+        url,
+        scene,
+        ENV_SIZE,
+        ENV_NO_MIPMAP,
+        true, // generateHarmonics
+        false, // gammaSpace：HDR 数据本身就是线性辐射度
+        ENV_PREFILTER,
+        () => done(tex),
+        (msg, exc) => {
+          console.error('[EditorEngine] HDR 解析失败：', name, msg, exc)
+          done(null)
+        },
+      )
+    } catch (err) {
+      console.error('[EditorEngine] HDR 创建失败：', name, err)
+      done(null)
+      return
+    }
+    timer = setTimeout(() => done(tex?.isReady() ? tex : null), ENV_TIMEOUT)
+  })
 }

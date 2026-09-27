@@ -1,20 +1,69 @@
 <script setup>
-import { ref } from 'vue'
+/**
+ * 左侧「搭建」面板：七个栏目做成可折叠的手风琴。
+ *
+ * 折叠状态存 localStorage（键 SECTION_KEY），刷新 / 重开浏览器还在。
+ * 五六两栏（HTML 元素导入、环境天空盒）是后来加的：前者是用户手写 HTML 片段，
+ * 后者上传 hdr 当天空盒 + 全局环境光照。
+ */
+import { ref, computed } from 'vue'
 import {
   GROUND_CATALOG,
   PRIMITIVE_CATALOG,
   LIGHT_CATALOG,
   EFFECT_SECTION,
+  HTML_DEFAULT_SOURCE,
+  ENV_FORM,
 } from '../schema/sceneSchema'
 import {
   editor,
-  assetLib,
   addFromCatalog,
   setGroundType,
   uploadAsset,
   addModelInstance,
+  addHtmlPanel,
   deleteAsset,
+  modelAssets,
+  envAssets,
+  uploadEnvAsset,
+  setEnvironmentAsset,
+  updateEnvironmentProp,
 } from '../store/editor'
+import { iconOf } from './icons'
+import Icon from './Icon.vue'
+
+const SECTION_KEY = 'twinEditor.libSections'
+const SECTION_KEYS = ['ground', 'primitive', 'light', 'effect', 'model', 'html', 'env']
+
+function readOpenState() {
+  const fallback = { ground: true, primitive: false, light: false, effect: false, model: false, html: false, env: false }
+  try {
+    const saved = JSON.parse(localStorage.getItem(SECTION_KEY) || 'null')
+    if (!saved || typeof saved !== 'object') return fallback
+    for (const key of SECTION_KEYS) {
+      fallback[key] = saved[key] === undefined ? fallback[key] : !!saved[key]
+    }
+  } catch {
+    /* 存了个坏值就用默认的 */
+  }
+  return fallback
+}
+
+const open = ref(readOpenState())
+
+function toggle(key) {
+  open.value[key] = !open.value[key]
+  localStorage.setItem(SECTION_KEY, JSON.stringify(open.value))
+}
+
+function toggleAll() {
+  // 有开着的就全收，全关上就全开
+  const anyOpen = SECTION_KEYS.some((k) => open.value[k])
+  for (const key of SECTION_KEYS) open.value[key] = !anyOpen
+  localStorage.setItem(SECTION_KEY, JSON.stringify(open.value))
+}
+
+/* ---- 模型自定义 ---- */
 
 const fileInput = ref(null)
 const uploading = ref(false)
@@ -31,6 +80,48 @@ async function onFilePicked(evt) {
   }
 }
 
+const models = computed(() => modelAssets())
+
+/* ---- HTML 元素导入 ---- */
+
+const htmlSource = ref(HTML_DEFAULT_SOURCE)
+const htmlWidth = ref(4)
+const htmlHeight = ref(2.4)
+const htmlMode = ref('3d')
+
+function importHtml() {
+  if (!htmlSource.value.trim()) {
+    window.alert('先填一段 HTML，再点导入')
+    return
+  }
+  addHtmlPanel(htmlSource.value, {
+    width: Number(htmlWidth.value) || 4,
+    height: Number(htmlHeight.value) || 2.4,
+    mode: htmlMode.value,
+  })
+}
+
+/* ---- 环境天空盒 ---- */
+
+const envFileInput = ref(null)
+const envUploading = ref(false)
+
+async function onEnvFilePicked(evt) {
+  const file = evt.target.files?.[0]
+  evt.target.value = ''
+  if (!file) return
+  envUploading.value = true
+  try {
+    await uploadEnvAsset(file)
+  } finally {
+    envUploading.value = false
+  }
+}
+
+const envs = computed(() => envAssets())
+const currentEnv = computed(() => editor.doc.scene.environment)
+const envActive = computed(() => currentEnv.value?.type === 'hdr' && currentEnv.value?.assetId)
+
 function fmtSize(bytes) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -39,106 +130,257 @@ function fmtSize(bytes) {
 
 <template>
   <div class="library">
-    <section class="lib-section">
-      <h3>① 场景底板 <span>· 整场景唯一</span></h3>
-      <div class="ground-list">
-        <button
-          v-for="g in GROUND_CATALOG"
-          :key="g.type"
-          class="ground-item"
-          :class="{ active: editor.doc.scene.ground.type === g.type }"
-          @click="setGroundType(g.type)"
-        >
-          <span class="ground-swatch" :class="`sw-${g.type}`"></span>
-          <span class="ground-text">
-            <strong>{{ g.name }}</strong>
-            <em>{{ g.desc }}</em>
-          </span>
-        </button>
+    <div class="lib-head">
+      <span>栏目</span>
+      <button class="toggle-all" @click="toggleAll">全部展开 / 收起</button>
+    </div>
+
+    <!-- 场景底板 -->
+    <section class="lib-section" :class="{ closed: !open.ground }">
+      <h3 @click="toggle('ground')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.ground }" />
+        <Icon name="layers" :size="13" />
+        场景底板 <em>· 整场景唯一</em>
+      </h3>
+      <div v-show="open.ground" class="lib-body">
+        <div class="ground-list">
+          <button
+            v-for="g in GROUND_CATALOG"
+            :key="g.type"
+            class="ground-item"
+            :class="{ active: editor.doc.scene.ground.type === g.type }"
+            @click="setGroundType(g.type)"
+          >
+            <span class="ground-swatch" :class="`sw-${g.type}`"></span>
+            <span class="ground-text">
+              <strong>{{ g.name }}</strong>
+              <em>{{ g.desc }}</em>
+            </span>
+          </button>
+        </div>
       </div>
     </section>
 
-    <section class="lib-section">
-      <h3>② 基础几何体 <span>· 点击添加到场景</span></h3>
-      <div class="item-grid">
-        <button
-          v-for="p in PRIMITIVE_CATALOG"
-          :key="p.type"
-          class="lib-item"
-          @click="addFromCatalog('primitive', p)"
-        >
-          <span class="lib-icon">{{ p.name.slice(0, 1) }}</span>
-          {{ p.name }}
-        </button>
+    <!-- 基础几何体 -->
+    <section class="lib-section" :class="{ closed: !open.primitive }">
+      <h3 @click="toggle('primitive')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.primitive }" />
+        <Icon name="box" :size="13" />
+        基础几何体 <em>· 点击添加到场景</em>
+      </h3>
+      <div v-show="open.primitive" class="lib-body">
+        <div class="item-grid">
+          <button
+            v-for="p in PRIMITIVE_CATALOG"
+            :key="p.type"
+            class="lib-item"
+            @click="addFromCatalog('primitive', p)"
+          >
+            <span class="lib-icon"><Icon name="box" :size="13" /></span>
+            {{ p.name }}
+          </button>
+        </div>
       </div>
     </section>
 
-    <section class="lib-section">
-      <h3>③ 灯光 <span>· 点击添加，旋转控制照射方向</span></h3>
-      <div class="item-grid">
-        <button
-          v-for="l in LIGHT_CATALOG"
-          :key="l.type"
-          class="lib-item"
-          @click="addFromCatalog('light', l)"
-        >
-          <span class="lib-icon light">☀</span>
-          {{ l.name }}
-        </button>
+    <!-- 灯光 -->
+    <section class="lib-section" :class="{ closed: !open.light }">
+      <h3 @click="toggle('light')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.light }" />
+        <Icon name="sun" :size="13" />
+        灯光 <em>· 旋转控制照射方向</em>
+      </h3>
+      <div v-show="open.light" class="lib-body">
+        <div class="item-grid">
+          <button
+            v-for="l in LIGHT_CATALOG"
+            :key="l.type"
+            class="lib-item"
+            @click="addFromCatalog('light', l)"
+          >
+            <span class="lib-icon"><Icon name="sun" :size="13" /></span>
+            {{ l.name }}
+          </button>
+        </div>
       </div>
     </section>
 
-    <section class="lib-section">
-      <h3>④ 特效组件 <span>· 能量管道 / 飞线 / 波纹墙 / 天气效果</span></h3>
-      <div class="item-grid">
-        <button
-          v-for="d in EFFECT_SECTION"
-          :key="d.type"
-          class="lib-item"
-          :title="d.desc"
-          @click="addFromCatalog(d.kind, d)"
-        >
-          <span class="lib-icon" :class="d.kind">{{ d.icon }}</span>
-          {{ d.name }}
-        </button>
+    <!-- 特效组件 -->
+    <section class="lib-section" :class="{ closed: !open.effect }">
+      <h3 @click="toggle('effect')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.effect }" />
+        <Icon name="sparkles" :size="13" />
+        特效组件 <em>· 管道 / 飞线 / 波纹墙 / 天气</em>
+      </h3>
+      <div v-show="open.effect" class="lib-body">
+        <div class="item-grid">
+          <button
+            v-for="d in EFFECT_SECTION"
+            :key="d.type"
+            class="lib-item"
+            :title="d.desc"
+            @click="addFromCatalog(d.kind, d)"
+          >
+            <span class="lib-icon"><Icon :name="iconOf(d.icon || d.kind)" :size="13" /></span>
+            {{ d.name }}
+          </button>
+        </div>
       </div>
     </section>
 
-    <section class="lib-section">
-      <h3>⑤ 行业模型 <span>· glb 素材，点击复用</span></h3>
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".glb,model/gltf-binary"
-        hidden
-        @change="onFilePicked"
-      />
-      <button class="upload-btn" :disabled="uploading" @click="fileInput.click()">
-        {{ uploading ? '加载中…' : '⬆ 上传 GLB（自动放入场景）' }}
-      </button>
-
-      <div v-if="assetLib.length" class="asset-list">
-        <button
-          v-for="a in assetLib"
-          :key="a.id"
-          class="asset-item"
-          title="点击添加到场景"
-          @click="addModelInstance(a.id)"
-        >
-          <span class="asset-icon">⬢</span>
-          <span class="asset-meta">
-            <strong>{{ a.name }}</strong>
-            <em>{{ fmtSize(a.size) }}</em>
-          </span>
-          <span
-            class="asset-del"
-            title="从素材库删除"
-            @click.stop="deleteAsset(a.id)"
-          >×</span>
+    <!-- 模型自定义 -->
+    <section class="lib-section" :class="{ closed: !open.model }">
+      <h3 @click="toggle('model')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.model }" />
+        <Icon name="cube" :size="13" />
+        模型自定义 <em>· glb 素材，点击复用</em>
+      </h3>
+      <div v-show="open.model" class="lib-body">
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".glb,model/gltf-binary"
+          hidden
+          @change="onFilePicked"
+        />
+        <button class="upload-btn" :disabled="uploading" @click="fileInput.click()">
+          <Icon name="upload" :size="13" />
+          {{ uploading ? '加载中…' : '上传 GLB（自动放入场景）' }}
         </button>
+
+        <div v-if="models.length" class="asset-list">
+          <button
+            v-for="a in models"
+            :key="a.id"
+            class="asset-item"
+            title="点击添加到场景"
+            @click="addModelInstance(a.id)"
+          >
+            <span class="asset-icon"><Icon name="cube" :size="15" /></span>
+            <span class="asset-meta">
+              <strong>{{ a.name }}</strong>
+              <em>{{ fmtSize(a.size) }}</em>
+            </span>
+            <span class="asset-del" title="从素材库删除" @click.stop="deleteAsset(a.id)">
+              <Icon name="close" :size="12" />
+            </span>
+          </button>
+        </div>
+        <div v-else class="asset-empty">还没有模型素材，上传一个 .glb 开始</div>
       </div>
-      <div v-else class="asset-empty">
-        还没有模型素材，上传一个 .glb 开始
+    </section>
+
+    <!-- HTML 元素导入 -->
+    <section class="lib-section" :class="{ closed: !open.html }">
+      <h3 @click="toggle('html')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.html }" />
+        <Icon name="code" :size="13" />
+        HTML 元素导入 <em>· 手写内容变成场景面板</em>
+      </h3>
+      <div v-show="open.html" class="lib-body">
+        <textarea
+          v-model="htmlSource"
+          class="html-input"
+          rows="8"
+          spellcheck="false"
+          placeholder="<div style=&#34;padding:12px;color:#fff&#34;>…</div>"
+        ></textarea>
+        <div class="html-row">
+          <label>宽(场景单位)</label>
+          <input v-model.number="htmlWidth" type="number" min="0.1" step="0.1" />
+          <label>高</label>
+          <input v-model.number="htmlHeight" type="number" min="0.1" step="0.1" />
+        </div>
+        <div class="html-row">
+          <label>朝向</label>
+          <select v-model="htmlMode">
+            <option value="3d">3D 面板</option>
+            <option value="billboard">始终朝你</option>
+          </select>
+        </div>
+        <button class="upload-btn solid" @click="importHtml">
+          <Icon name="plus" :size="13" />
+          导入到场景
+        </button>
+        <p class="html-tip">
+          面板内容靠把 HTML 栅格化成贴图实现：行内样式、文字、表格、简单布局都照原样，
+          <code>&lt;br&gt;</code>、<code>&amp;nbsp;</code> 会自动转成能渲染的写法；
+          但 <code>&lt;script&gt;</code>、外链图片字体、canvas / 视频不会生效
+          （渲染失败会自动退化成纯文本，内容不会丢）。大小和朝向导入后还能在右侧属性里改。
+        </p>
+      </div>
+    </section>
+
+    <!-- 环境天空盒 -->
+    <section class="lib-section" :class="{ closed: !open.env }">
+      <h3 @click="toggle('env')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.env }" />
+        <Icon name="globe" :size="13" />
+        环境天空盒 <em>· 上传 hdr 照亮整个场景</em>
+      </h3>
+      <div v-show="open.env" class="lib-body">
+        <input
+          ref="envFileInput"
+          type="file"
+          accept=".hdr,image/vnd.radiance"
+          hidden
+          @change="onEnvFilePicked"
+        />
+        <button class="upload-btn" :disabled="envUploading" @click="envFileInput.click()">
+          <Icon name="upload" :size="13" />
+          {{ envUploading ? '加载中…' : '上传 HDR 环境贴图' }}
+        </button>
+
+        <div v-if="envs.length" class="asset-list">
+          <button
+            v-for="a in envs"
+            :key="a.id"
+            class="asset-item"
+            :class="{ active: envActive && currentEnv.assetId === a.id }"
+            :title="envActive && currentEnv.assetId === a.id ? '当前环境' : '点击设为当前环境'"
+            @click="setEnvironmentAsset(a.id)"
+          >
+            <span class="asset-icon"><Icon name="globe" :size="15" /></span>
+            <span class="asset-meta">
+              <strong>{{ a.name }}</strong>
+              <em>{{ fmtSize(a.size) }}</em>
+            </span>
+            <span class="asset-del" title="从素材库删除" @click.stop="deleteAsset(a.id)">
+              <Icon name="close" :size="12" />
+            </span>
+          </button>
+        </div>
+        <div v-else class="asset-empty">还没有环境贴图，上传一个 .hdr 开始（Poly Haven 上有一堆）</div>
+
+        <template v-if="envActive">
+          <div class="env-fields">
+            <div v-for="f in ENV_FORM" :key="f.key" class="env-field">
+              <span class="env-label">{{ f.label }}</span>
+              <input
+                v-if="f.type === 'number'"
+                type="number"
+                :min="f.min"
+                :max="f.max"
+                :step="f.step"
+                :value="currentEnv.props?.[f.key]"
+                @input="updateEnvironmentProp(f.key, Number($event.target.value))"
+              />
+              <label v-else-if="f.type === 'switch'" class="env-switch">
+                <input
+                  type="checkbox"
+                  :checked="currentEnv.props?.[f.key] !== false"
+                  @change="updateEnvironmentProp(f.key, $event.target.checked)"
+                />
+                <span>{{ currentEnv.props?.[f.key] === false ? '关' : '开' }}</span>
+              </label>
+            </div>
+          </div>
+          <button class="upload-btn ghost" @click="setEnvironmentAsset(null)">
+            <Icon name="close" :size="12" />
+            移除环境（回到纯色背景）
+          </button>
+        </template>
+        <p v-else class="html-tip">当前没有环境：背景是纯色，物体只吃场景里的灯光。</p>
       </div>
     </section>
   </div>
@@ -146,74 +388,111 @@ function fmtSize(bytes) {
 
 <style scoped>
 .library {
-  padding: 10px;
+  padding: var(--s-2);
   overflow-y: auto;
 }
+.lib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--h-ctrl);
+  margin-bottom: var(--s-2);
+}
+.lib-head > span {
+  font-size: var(--fs-2xs);
+  color: var(--t-faint);
+  letter-spacing: 0.06em;
+}
+.toggle-all {
+  border: none;
+  background: transparent;
+  color: var(--t-muted);
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+  padding: 0 var(--s-1);
+  height: var(--h-ctrl);
+  border-radius: var(--r-sm);
+}
+.toggle-all:hover {
+  color: var(--t-strong);
+  background: var(--c-active);
+}
 .lib-section {
-  margin-bottom: 16px;
+  margin-bottom: var(--s-2);
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-md);
 }
 .lib-section h3 {
-  margin: 0 0 8px;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0 var(--s-2);
+  height: var(--h-row);
+  font-size: var(--fs-sm);
   font-weight: 600;
-  color: #8b98b0;
+  color: var(--t-body);
+  cursor: pointer;
+  user-select: none;
 }
-.lib-section h3 span {
+.lib-section h3:hover {
+  color: var(--t-strong);
+}
+.lib-section h3 em {
+  margin-left: auto;
+  font-size: var(--fs-2xs);
   font-weight: 400;
-  color: #55617a;
+  color: var(--t-faint);
+  font-style: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.caret {
+  flex-shrink: 0;
+  color: var(--t-faint);
+  transition: transform var(--dur) var(--ease);
+}
+/* 朝下就是展开，朝右就是收起 —— 靠旋转而不是换字形 */
+.caret.shut {
+  transform: rotate(-90deg);
+}
+.lib-section.closed {
+  background: var(--c-app);
+}
+.lib-body {
+  padding: 0 var(--s-2) var(--s-3);
 }
 .ground-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-1);
 }
 .ground-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
-  background: #151b28;
-  border: 1px solid #262f42;
-  border-radius: 7px;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   cursor: pointer;
   text-align: left;
 }
 .ground-item:hover {
-  border-color: #3d8bff;
+  border-color: var(--accent-line);
 }
 .ground-item.active {
-  border-color: #3d8bff;
-  background: #13274a;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .ground-swatch {
   width: 26px;
   height: 26px;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   flex-shrink: 0;
-  border: 1px solid #31405a;
-}
-.sw-grid {
-  background-color: #0a1730;
-  background-image:
-    linear-gradient(#1e6bff 1px, transparent 1px),
-    linear-gradient(90deg, #1e6bff 1px, transparent 1px);
-  background-size: 9px 9px;
-}
-.sw-solid {
-  background: #1c2635;
-}
-.sw-serverRoom {
-  background-color: #20262f;
-  background-image:
-    linear-gradient(#4a5870 1.5px, transparent 1.5px),
-    linear-gradient(90deg, #4a5870 1.5px, transparent 1.5px);
-  background-size: 11px 11px;
-}
-.sw-digital {
-  background-color: #041018;
-  background-image:
-    radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.9) 0, rgba(0, 229, 255, 0.15) 45%, transparent 60%),
-    repeating-radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.55) 0 1px, transparent 1px 5px);
+  border: 1px solid var(--c-line-strong);
 }
 .ground-text {
   display: flex;
@@ -221,102 +500,128 @@ function fmtSize(bytes) {
   min-width: 0;
 }
 .ground-text strong {
-  font-size: 12px;
-  color: #d4dceb;
+  font-size: var(--fs-sm);
+  color: var(--t-strong);
   font-weight: 600;
 }
 .ground-text em {
-  font-size: 11px;
-  color: #66748e;
+  font-size: var(--fs-2xs);
+  color: var(--t-muted);
   font-style: normal;
 }
 .item-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: var(--s-1);
 }
 .lib-item {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 9px;
-  font-size: 12px;
-  color: #c6d0e0;
-  background: #151b28;
-  border: 1px solid #262f42;
-  border-radius: 7px;
+  gap: var(--s-2);
+  height: var(--h-row);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--t-body);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .lib-item:hover {
-  border-color: #3d8bff;
-  color: #fff;
+  border-color: var(--accent-line);
+  color: var(--t-strong);
 }
+/* 图标容器只负责对齐，颜色一律 --t-muted：种类信息形状已经带够了 */
 .lib-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  font-size: 11px;
-  color: #8fc0ff;
-  background: #1d2c47;
-  border-radius: 4px;
-}
-.lib-icon.light {
-  color: #e8c46a;
-  background: #3a3220;
-}
-.lib-icon.pipe {
-  color: #4fd8ff;
-  background: #10314a;
-}
-.lib-icon.effect {
-  color: #b48cff;
-  background: #2a1f45;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--t-muted);
+  background: var(--c-active);
+  border-radius: var(--r-sm);
 }
 .upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
   width: 100%;
-  height: 34px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #9ecbff;
-  background: #13274a;
-  border: 1px dashed #3d6fb5;
-  border-radius: 7px;
+  height: var(--h-btn-lg);
+  margin-bottom: var(--s-2);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .upload-btn:hover:not(:disabled) {
-  border-color: #5a9bff;
-  background: #163156;
+  background: var(--c-active);
+  border-color: var(--accent);
 }
 .upload-btn:disabled {
   opacity: 0.6;
   cursor: wait;
 }
+.upload-btn.solid {
+  border-style: solid;
+  margin-bottom: var(--s-1);
+  color: var(--on-accent);
+  font-weight: 600;
+  background: var(--accent);
+  border-color: transparent;
+}
+.upload-btn.solid:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: transparent;
+}
+.upload-btn.ghost {
+  height: var(--h-btn);
+  font-size: var(--fs-xs);
+  color: var(--t-muted);
+  background: transparent;
+  border: 1px solid var(--c-line-strong);
+}
+.upload-btn.ghost:hover {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+}
 .asset-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-1);
 }
 .asset-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
-  background: #151b28;
-  border: 1px solid #262f42;
-  border-radius: 7px;
+  gap: var(--s-2);
+  padding: var(--s-2);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   cursor: pointer;
   text-align: left;
 }
 .asset-item:hover {
-  border-color: #3d8bff;
+  border-color: var(--accent-line);
+}
+.asset-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .asset-icon {
-  font-size: 16px;
-  color: #7bd4a6;
+  display: inline-flex;
   flex-shrink: 0;
+  color: var(--t-muted);
+}
+.asset-item.active .asset-icon {
+  color: var(--accent-hover);
 }
 .asset-meta {
   display: flex;
@@ -325,34 +630,121 @@ function fmtSize(bytes) {
   flex: 1;
 }
 .asset-meta strong {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
-  color: #d4dceb;
+  color: var(--t-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .asset-meta em {
-  font-size: 10px;
-  color: #66748e;
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--t-muted);
   font-style: normal;
 }
 .asset-del {
   display: none;
-  color: #8293ad;
-  font-size: 14px;
-  padding: 0 2px;
+  color: var(--t-faint);
+  padding: var(--s-1);
+  margin: calc(-1 * var(--s-1));
+  border-radius: var(--r-xs);
 }
 .asset-item:hover .asset-del {
-  display: inline;
+  display: inline-flex;
 }
 .asset-del:hover {
-  color: #ff6b6b;
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 .asset-empty {
-  font-size: 11px;
-  color: #55617a;
+  font-size: var(--fs-2xs);
+  color: var(--t-faint);
   text-align: center;
-  padding: 10px 0 4px;
+  padding: var(--s-3) 0 var(--s-2);
+  line-height: 1.6;
+}
+
+/* ---- HTML 元素导入 ---- */
+.html-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--s-2);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  font-family: var(--font-mono);
+  color: var(--t-strong);
+  background: var(--c-viewport);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+  resize: vertical;
+}
+.html-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--t-muted);
+}
+.html-row label {
+  flex-shrink: 0;
+}
+.html-row input[type='number'] {
+  width: 64px;
+  height: var(--h-ctrl);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.html-row select {
+  flex: 1;
+  height: var(--h-ctrl);
+  font-size: var(--fs-sm);
+}
+.html-tip {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.7;
+  color: var(--t-faint);
+}
+.html-tip code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--t-muted);
+}
+
+/* ---- 环境天空盒 ---- */
+.env-fields {
+  margin: var(--s-1) 0 var(--s-2);
+  border-top: 1px solid var(--c-line);
+  padding-top: var(--s-2);
+}
+.env-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-1);
+  font-size: var(--fs-xs);
+}
+.env-label {
+  width: 88px;
+  flex-shrink: 0;
+  color: var(--t-muted);
+}
+.env-field input[type='number'] {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-ctrl);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.env-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--t-body);
+  cursor: pointer;
 }
 </style>

@@ -4,11 +4,11 @@
  * 文档结构：
  * {
  *   version: '0.1.0',
- *   scene: { background, ground: { type, props } },
+ *   scene: { background, ground: { type, props }, environment: { type, assetId, props } },
  *   nodes: [
  *     {
  *       id, name,
- *       kind: 'primitive' | 'light' | 'pipe' | 'effect' | 'model',
+ *       kind: 'primitive' | 'light' | 'pipe' | 'effect' | 'model' | 'html',
  *       type: 'box' | 'sphere' | ... | 'hemispheric' ...,
  *       parentId: null,                      // 预留：层级父子关系
  *       transform: { position:[x,y,z], rotation:[x,y,z] 角度, scaling:[x,y,z] },
@@ -605,13 +605,103 @@ export const LIGHT_CATALOG = [
 
 /* ---------------- 查询工具 ---------------- */
 
+/**
+ * HTML 元素：用户写一段 HTML，渲染成场景里的一块贴图面板。
+ *
+ * 走 SVG foreignObject 把 HTML 栅格化成 canvas，所以只吃「能画出来的东西」：
+ * 行内样式 / 文字 / 表格 / 简单布局可以；<script>、外链图片字体、canvas、视频都不行
+ * （栅格化时浏览器处于「画图沙箱」，不让执行脚本、不加载外部资源）。
+ * 导入面板里会写清楚这条限制，渲染失败的片段会退化成纯文本，不会把场景搞崩。
+ */
+export const HTML_PANEL_FORM = [
+  {
+    key: 'html',
+    label: 'HTML 内容',
+    type: 'textarea',
+    rows: 8,
+    placeholder: '<div style="padding:16px;color:#fff">…</div>',
+  },
+  { key: 'width', label: '宽(场景单位)', type: 'number', min: 0.1, step: 0.1 },
+  { key: 'height', label: '高(场景单位)', type: 'number', min: 0.1, step: 0.1 },
+  {
+    key: 'mode',
+    label: '朝向',
+    type: 'select',
+    options: [
+      { label: '3D 面板', value: '3d' },
+      { label: '始终朝你', value: 'billboard' },
+    ],
+  },
+]
+
+export const HTML_DEFAULT_SOURCE =
+  '<div style="width:100%;height:100%;box-sizing:border-box;padding:14px;'
+  + "font:13px/1.6 'Microsoft YaHei',sans-serif;color:#dbe6ff;background:#0b1424cc;"
+  + "border:1px solid #2b4470;border-radius:6px\">\n"
+  + '  <strong style="color:#7fb2ff">标题</strong>\n'
+  + '  <div style="color:#8fa2c0">这里是自定义 HTML 面板</div>\n'
+  + '</div>'
+
+export const HTML_CATALOG = [
+  {
+    kind: 'html',
+    type: 'html',
+    name: 'HTML 面板',
+    icon: '⌘',
+    defaultProps: {
+      html: HTML_DEFAULT_SOURCE,
+      width: 4,
+      height: 2.4,
+      mode: '3d',
+    },
+    form: HTML_PANEL_FORM,
+  },
+]
+
+/* ---------------- 环境天空盒 ---------------- */
+
+export const ENV_DEFAULT_PROPS = { skybox: true, intensity: 1, rotation: 0, blur: 0 }
+
+/** 文档里 scene.environment 的默认值（无环境，只用纯色背景） */
+export const ENV_DOC_DEFAULT = {
+  type: 'none', // 'none' | 'hdr'
+  assetId: null,
+  assetName: '',
+  props: { ...ENV_DEFAULT_PROPS },
+}
+
+export const ENV_FORM = [
+  { key: 'intensity', label: '环境光强度', type: 'number', min: 0, step: 0.1 },
+  { key: 'rotation', label: '水平旋转(°)', type: 'number', step: 5 },
+  { key: 'blur', label: '天空盒模糊', type: 'number', min: 0, max: 1, step: 0.05 },
+  { key: 'skybox', label: '显示天空盒', type: 'switch' },
+]
+
 const ALL_GROUPS = [
   ...GROUND_CATALOG.map((c) => ({ kind: 'ground', ...c })),
   ...PRIMITIVE_CATALOG.map((c) => ({ kind: 'primitive', ...c })),
   ...LIGHT_CATALOG.map((c) => ({ kind: 'light', ...c })),
   ...PIPE_CATALOG.map((c) => ({ kind: 'pipe', ...c })),
   ...DATAV_CATALOG.map((c) => ({ kind: 'effect', ...c })),
+  ...HTML_CATALOG,
 ]
+
+/** 新建 HTML 元素节点（HTML 内容来自左侧面板的输入框） */
+export function createHtmlNode(source = HTML_DEFAULT_SOURCE, size = {}) {
+  return {
+    id: genId(),
+    name: 'HTML 面板',
+    kind: 'html',
+    type: 'html',
+    parentId: null,
+    transform: IDENTITY_TRANSFORM(),
+    props: {
+      ...HTML_CATALOG[0].defaultProps,
+      html: source,
+      ...size,
+    },
+  }
+}
 
 export function findCatalog(kind, type) {
   return ALL_GROUPS.find((c) => c.kind === kind && c.type === type)
@@ -682,8 +772,23 @@ export function createDefaultDocument() {
         type: GROUND_CATALOG[0].type,
         props: { ...GROUND_CATALOG[0].defaultProps },
       },
+      environment: { ...ENV_DOC_DEFAULT, props: { ...ENV_DOC_DEFAULT.props } },
     },
     nodes: [light],
     cameras: [],
+  }
+}
+
+/** 读文档里的环境配置：老文档没有这个字段时按「无环境」处理 */
+export function normalizeEnvironment(doc) {
+  const env = doc?.scene?.environment
+  if (!env || env.type !== 'hdr') {
+    return { type: 'none', ...ENV_DOC_DEFAULT, props: { ...ENV_DOC_DEFAULT.props } }
+  }
+  return {
+    type: 'hdr',
+    assetId: env.assetId ?? null,
+    assetName: env.assetName ?? '',
+    props: { ...ENV_DEFAULT_PROPS, ...(env.props || {}) },
   }
 }

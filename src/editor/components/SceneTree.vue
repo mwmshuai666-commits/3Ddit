@@ -1,8 +1,16 @@
 <script setup>
 import { editor, selectNode, removeNode, GROUND_SELECTION } from '../store/editor'
 import { findGroundCatalog } from '../schema/sceneSchema'
+import { iconOf } from './icons'
+import Icon from './Icon.vue'
 
 const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
+
+/**
+ * 目录项的 icon 字段是 unicode 数据（会进导出的 scene.json，不能改旧值），
+ * 渲染时映射成 SVG 图标名；没有 icon 字段的老场景退回用 kind。
+ */
+const kindIcon = (node) => iconOf(node.icon || node.kind)
 </script>
 
 <template>
@@ -12,7 +20,7 @@ const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
       :class="{ active: editor.selectedId === GROUND_SELECTION }"
       @click="selectNode(GROUND_SELECTION)"
     >
-      <span class="tree-icon">▔</span>
+      <span class="tree-icon"><Icon name="layers" :size="14" /></span>
       <span class="tree-name">地面 · {{ groundName() }}</span>
     </div>
 
@@ -25,16 +33,12 @@ const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
       :class="{ active: editor.selectedId === node.id }"
       @click="selectNode(node.id)"
     >
-      <span class="tree-icon" :class="node.kind">{{
-        node.kind === 'light' ? '☀'
-          : node.kind === 'model' ? '⬢'
-          : node.kind === 'pipe' ? '⚡'
-          : node.kind === 'effect' ? '✦'
-          : '▣'
-      }}</span>
+      <span class="tree-icon"><Icon :name="kindIcon(node)" :size="14" /></span>
       <span class="tree-name">{{ node.name }}</span>
       <span class="tree-type">{{ node.type }}</span>
-      <button class="tree-del" title="删除" @click.stop="removeNode(node.id)">×</button>
+      <button class="tree-del" title="删除" @click.stop="removeNode(node.id)">
+        <Icon name="trash" :size="13" />
+      </button>
     </div>
 
     <div v-if="editor.doc.nodes.length === 0" class="tree-empty">
@@ -45,78 +49,73 @@ const groundName = () => findGroundCatalog(editor.doc.scene.ground.type).name
 
 <style scoped>
 .tree {
-  padding: 8px;
+  padding: var(--s-2);
 }
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 6px;
+  gap: var(--s-2);
+  height: var(--h-row);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-sm);
   cursor: pointer;
-  font-size: 12px;
-  color: #c6d0e0;
+  font-size: var(--fs-sm);
+  color: var(--t-body);
 }
 .tree-row:hover {
-  background: #1a2233;
+  background: var(--c-raised);
 }
 .tree-row.active {
-  background: #16345f;
-  color: #9ecbff;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
+/* 图标只做形状区分，不上糖果色——种类信息形状已经带够了 */
 .tree-icon {
-  width: 16px;
-  text-align: center;
-  color: #6f8bb8;
+  display: inline-flex;
   flex-shrink: 0;
+  color: var(--t-muted);
 }
-.tree-icon.light {
-  color: #e8c46a;
-}
-.tree-icon.model {
-  color: #7bd4a6;
-}
-.tree-icon.pipe {
-  color: #4fd8ff;
-}
-.tree-icon.effect {
-  color: #b48cff;
+.tree-row.active .tree-icon {
+  color: inherit;
 }
 .tree-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tree-type {
-  font-size: 10px;
-  color: #5d6b85;
+  font-size: var(--fs-2xs);
+  color: var(--t-faint);
+  white-space: nowrap;
 }
 .tree-del {
   display: none;
   border: none;
   background: transparent;
-  color: #8293ad;
-  font-size: 14px;
+  color: var(--t-faint);
   cursor: pointer;
-  padding: 0 2px;
+  padding: var(--s-1);
+  margin: -var(--s-1);
+  border-radius: var(--r-xs);
 }
 .tree-row:hover .tree-del {
-  display: inline;
+  display: inline-flex;
 }
 .tree-del:hover {
-  color: #ff6b6b;
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 .tree-sep {
-  margin: 10px 4px 6px;
-  font-size: 11px;
-  color: #55617a;
+  margin: var(--s-3) var(--s-1) var(--s-2);
+  font-size: var(--fs-xs);
+  color: var(--t-faint);
 }
 .tree-empty {
-  padding: 18px 8px;
-  font-size: 12px;
-  color: #55617a;
+  padding: var(--s-5) var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--t-faint);
   text-align: center;
 }
 </style>

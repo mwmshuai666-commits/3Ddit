@@ -4,14 +4,14 @@
  * 产物：一个 .html，双击就能看，也可以 <iframe> 进任何技术栈的项目。
  * 里面内嵌三样东西：
  *   1. 播放器全局包（babylon-scene-player 的 standalone 构建，Babylon 已打进去）
- *   2. 场景 JSON
- *   3. 数字地板四张贴图（base64）+ glb 模型（base64，embedded 模式）
+ *   2. 场景 JSON（模型 base64）
+ *   3. 环境 HDR 等素材（base64，embedded 模式）
+ * 数字地板四张贴图不用管 —— 库自己就内置了一份（src/groundTextures.js），
+ * 只有从旧构建拷来的播放器包里没有，才会由调用方额外塞进 options.groundTextures。
  * 所以它不依赖网络、不依赖 node_modules、不依赖同目录的其它文件。
  *
  * 生成的页面只做「播放」：没有编辑器的 Gizmo / 场景树 / 属性面板。
  */
-
-import { GROUND_TEXTURE_FILES } from '../core/digitalGround.js'
 
 /** JSON 塞进 <script> 前必须转义 <，否则文档里出现 "</script>" 会提前结束脚本 */
 function safeJson(value) {
@@ -24,8 +24,11 @@ function safeJson(value) {
  */
 export function buildStandaloneHtml({ doc, playerBundle, groundTextures }) {
   const nodeCount = (doc.nodes || []).length
-  const modelCount = (doc.assets || []).length
-  const meta = `${nodeCount} 个节点${modelCount ? ` · ${modelCount} 个模型` : ''}`
+  const assets = doc.assets || []
+  const modelCount = assets.filter((a) => a.kind !== 'hdr').length
+  const envCount = assets.filter((a) => a.kind === 'hdr').length
+  const meta = `${nodeCount} 个节点 · ${modelCount} 个模型`
+    + (envCount ? ` · ${envCount} 张环境贴图` : '')
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -98,8 +101,9 @@ ${playerBundle}
     <script>
       // 场景数据与资源（base64 内嵌，无需同目录文件）
       window.__SCENE_DOC__ = ${safeJson(doc)};
-      window.__SCENE_OPTIONS__ = {
-        groundTextures: ${safeJson(groundTextures || [])},
+      window.__SCENE_OPTIONS__ = {${(groundTextures || []).length
+        ? `\n        groundTextures: ${safeJson(groundTextures)},`
+        : ''}
         onError(err) {
           console.error('[scene] 加载出错：', err);
           var s = document.getElementById('status');
@@ -131,5 +135,5 @@ ${playerBundle}
 `
 }
 
-/** 完整包里 README 用：单文件 HTML 不需要任何配置 */
-export const HTML_EXPORT_HINT = `数字地板贴图来源：${GROUND_TEXTURE_FILES.join(' / ')}（已内嵌为 base64）`
+/** 完整包里 README 用：单文件 HTML 不需要任何配置（数字地板贴图已内置在播放器里） */
+export const HTML_EXPORT_HINT = '数字地板贴图已由播放器内置，无需额外文件'

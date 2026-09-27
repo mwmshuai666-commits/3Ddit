@@ -17,8 +17,9 @@ import {
   removePathPoint,
   movePathPoint,
   applyPathPreset,
+  updateEnvironmentProp,
 } from '../store/editor'
-import { findCatalog, findGroundCatalog } from '../schema/sceneSchema'
+import { findCatalog, findGroundCatalog, ENV_FORM } from '../schema/sceneSchema'
 import PointListEditor from './PointListEditor.vue'
 
 const isGround = computed(
@@ -39,6 +40,13 @@ const pointConfig = computed(() =>
 const groundForm = computed(() => findGroundCatalog(editor.doc.scene.ground.type).form)
 const ground = computed(() => editor.doc.scene.ground)
 
+/** 场景级环境（scene.environment）；没配就当成「无环境」 */
+const envDoc = computed(() => {
+  const env = editor.doc.scene?.environment
+  return env && env.type === 'hdr' ? env : null
+})
+const envActive = computed(() => !!envDoc.value?.assetId)
+
 const transformParts = [
   { key: 'position', label: '位置', step: 0.1 },
   { key: 'rotation', label: '旋转(°)', step: 1 },
@@ -46,7 +54,13 @@ const transformParts = [
 ]
 const axes = ['X', 'Y', 'Z']
 
-const KIND_TAGS = { light: '灯光', model: '模型', pipe: '管道', effect: '特效' }
+const KIND_TAGS = {
+  light: '灯光',
+  model: '模型',
+  pipe: '管道',
+  effect: '特效',
+  html: 'HTML',
+}
 
 function kindTag(kind) {
   return KIND_TAGS[kind] || '几何体'
@@ -112,12 +126,41 @@ function numInput(fn, evt, field) {
           />
         </div>
       </section>
+
+      <section class="insp-section">
+        <h4>环境天空盒</h4>
+        <template v-if="envActive">
+          <div class="form-row">
+            <label>当前环境</label>
+            <span class="readonly env-name" :title="envDoc.assetName">{{ envDoc.assetName }}</span>
+          </div>
+          <div v-for="f in ENV_FORM" :key="f.key" class="form-row">
+            <label>{{ f.label }}</label>
+            <input
+              v-if="f.type === 'switch'"
+              type="checkbox"
+              :checked="envDoc.props?.[f.key] !== false"
+              @change="updateEnvironmentProp(f.key, $event.target.checked)"
+            />
+            <input
+              v-else
+              type="number"
+              :min="f.min"
+              :max="f.max"
+              :step="f.step"
+              :value="envDoc.props?.[f.key]"
+              @input="numInput((v) => updateEnvironmentProp(f.key, v), $event)"
+            />
+          </div>
+        </template>
+        <p v-else class="insp-hint">未使用环境贴图（左侧「⑦ 环境天空盒」上传 .hdr）</p>
+      </section>
     </template>
 
     <!-- ===== 节点属性 ===== -->
     <template v-else-if="node">
       <div class="insp-title">
-        <span class="kind-tag" :class="node.kind">{{ kindTag(node.kind) }}</span>
+        <span class="kind-tag">{{ kindTag(node.kind) }}</span>
         节点属性
       </div>
 
@@ -193,6 +236,15 @@ function numInput(fn, evt, field) {
               {{ o.label }}
             </option>
           </select>
+          <textarea
+            v-else-if="f.type === 'textarea'"
+            class="text-area"
+            :rows="f.rows || 6"
+            :placeholder="f.placeholder"
+            :value="node.props[f.key]"
+            spellcheck="false"
+            @input="updateNodeProps(node.id, f.key, $event.target.value)"
+          ></textarea>
           <input
             v-else
             type="number"
@@ -216,60 +268,75 @@ function numInput(fn, evt, field) {
 
 <style scoped>
 .inspector {
-  width: 272px;
+  width: var(--w-panel);
   flex-shrink: 0;
-  background: #0e131d;
-  border-left: 1px solid #232a38;
+  background: var(--c-panel);
+  border-left: 1px solid var(--c-line);
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--s-3);
 }
 .insp-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--s-2);
+  font-size: var(--fs-md);
   font-weight: 600;
-  color: #d4dceb;
-  margin-bottom: 12px;
+  color: var(--t-strong);
+  margin-bottom: var(--s-3);
 }
+/* 标签上不再按 light/model/pipe/effect/html 分糖果色：种类靠文字，颜色只表达状态 */
 .kind-tag {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #1d2c47;
-  color: #8fc0ff;
+  padding: 1px var(--s-1);
+  border-radius: var(--r-sm);
+  color: var(--t-muted);
+  background: var(--c-active);
+  border: 1px solid var(--c-line);
 }
-.kind-tag.light {
-  background: #3a3220;
-  color: #e8c46a;
+.text-area {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--s-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  color: var(--t-strong);
+  background: var(--c-viewport);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+  resize: vertical;
 }
-.kind-tag.model {
-  background: #16352a;
-  color: #7bd4a6;
+.text-area:focus {
+  outline: none;
+  border-color: var(--accent);
 }
-.kind-tag.pipe {
-  background: #10314a;
-  color: #4fd8ff;
+.env-name {
+  max-width: 150px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.kind-tag.effect {
-  background: #2a1f45;
-  color: #b48cff;
+.insp-hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--t-faint);
 }
 .form-row input[type='checkbox'] {
   width: 16px;
   height: 16px;
-  accent-color: #3d8bff;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 .insp-section {
-  margin-bottom: 16px;
+  margin-bottom: var(--s-4);
 }
 .insp-section h4 {
-  margin: 0 0 8px;
-  font-size: 11px;
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-xs);
   font-weight: 600;
-  color: #5d6b85;
+  color: var(--t-faint);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -277,67 +344,70 @@ function numInput(fn, evt, field) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
 }
 .form-row label {
-  font-size: 12px;
-  color: #8b98b0;
+  font-size: var(--fs-sm);
+  color: var(--t-muted);
   flex-shrink: 0;
 }
+/* 输入框不再写死 130px：占满标签剩下的宽度，长数值 / 长名称都不会被裁掉 */
 .form-row input[type='number'],
 .text-input {
-  width: 130px;
-  height: 26px;
-  padding: 0 7px;
-  font-size: 12px;
-  color: #d4dceb;
-  background: #151b28;
-  border: 1px solid #2a3346;
-  border-radius: 5px;
+  flex: 1;
+  min-width: 0;
+  height: var(--h-btn);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--t-strong);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   box-sizing: border-box;
 }
 .form-row .select-input {
-  width: 130px;
-  height: 26px;
-  padding: 0 6px;
-  font-size: 12px;
-  color: #d4dceb;
-  background: #151b28;
-  border: 1px solid #2a3346;
-  border-radius: 5px;
+  flex: 1;
+  min-width: 0;
+  height: var(--h-btn);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--t-strong);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   box-sizing: border-box;
   cursor: pointer;
 }
 .form-row input[type='color'] {
   width: 44px;
-  height: 24px;
+  height: var(--h-ctrl);
   padding: 0;
-  border: 1px solid #2a3346;
-  border-radius: 5px;
-  background: #151b28;
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+  background: var(--c-raised);
   cursor: pointer;
 }
 .form-row input:focus {
   outline: none;
-  border-color: #3d8bff;
+  border-color: var(--accent);
 }
 .readonly {
-  font-size: 12px;
-  color: #66748e;
-  font-family: ui-monospace, Consolas, monospace;
+  font-size: var(--fs-sm);
+  color: var(--t-muted);
+  font-family: var(--font-mono);
 }
 .transform-block {
-  margin-bottom: 8px;
+  margin-bottom: var(--s-2);
 }
 .transform-label {
-  font-size: 11px;
-  color: #66748e;
+  font-size: var(--fs-xs);
+  color: var(--t-muted);
   margin-bottom: 3px;
 }
 .transform-row {
   display: flex;
-  gap: 6px;
+  gap: var(--s-2);
 }
 .transform-cell {
   flex: 1;
@@ -346,98 +416,77 @@ function numInput(fn, evt, field) {
   gap: 3px;
 }
 .transform-cell .axis {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   width: 10px;
+  /* X/Y/Z 靠字母本身区分，收回 RGB 糖果色：颜色只表达状态 */
+  color: var(--t-muted);
 }
-.axis.x { color: #ff6b6b; }
-.axis.y { color: #6bff9e; }
-.axis.z { color: #6bb5ff; }
 .transform-cell input {
   width: 100%;
   min-width: 0;
-  height: 26px;
-  padding: 0 4px;
-  font-size: 11px;
-  color: #d4dceb;
-  background: #151b28;
-  border: 1px solid #2a3346;
-  border-radius: 5px;
+  height: var(--h-btn);
+  padding: 0 var(--s-1);
+  font-size: var(--fs-xs);
+  /* 等宽数字：一边改一边看数值时，位数变化不会让格子抖 */
+  font-variant-numeric: tabular-nums;
+  color: var(--t-strong);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
   box-sizing: border-box;
 }
 .transform-cell input:focus {
   outline: none;
-  border-color: #3d8bff;
+  border-color: var(--accent);
 }
 .ground-types {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--s-2);
 }
 .ground-type {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-  color: #c6d0e0;
-  background: #151b28;
-  border: 1px solid #262f42;
-  border-radius: 6px;
+  gap: var(--s-2);
+  height: var(--h-row);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--t-body);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .ground-type.active {
-  border-color: #3d8bff;
-  background: #13274a;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
+/* 四种地面的预览漆已移到 styles/swatches.css 全站共享，这里只留盒子尺寸 */
 .gt-swatch {
   width: 18px;
   height: 18px;
-  border-radius: 4px;
-  border: 1px solid #31405a;
-}
-.sw-grid {
-  background-color: #0a1730;
-  background-image:
-    linear-gradient(#1e6bff 1px, transparent 1px),
-    linear-gradient(90deg, #1e6bff 1px, transparent 1px);
-  background-size: 7px 7px;
-}
-.sw-solid {
-  background: #1c2635;
-}
-.sw-serverRoom {
-  background-color: #20262f;
-  background-image:
-    linear-gradient(#4a5870 1.5px, transparent 1.5px),
-    linear-gradient(90deg, #4a5870 1.5px, transparent 1.5px);
-  background-size: 9px 9px;
-}
-.sw-digital {
-  background-color: #041018;
-  background-image:
-    radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.9) 0, rgba(0, 229, 255, 0.15) 45%, transparent 60%),
-    repeating-radial-gradient(circle at 50% 50%, rgba(0, 229, 255, 0.55) 0 1px, transparent 1px 5px);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-line-strong);
 }
 .delete-btn {
   width: 100%;
-  height: 32px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: #ff8a8a;
-  background: #2a1a1e;
-  border: 1px solid #55303a;
-  border-radius: 6px;
+  height: var(--h-row);
+  margin-top: var(--s-2);
+  font-size: var(--fs-sm);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 .delete-btn:hover {
-  background: #3a2025;
+  border-color: var(--danger);
 }
 .insp-empty {
-  font-size: 12px;
-  color: #55617a;
+  font-size: var(--fs-sm);
+  color: var(--t-faint);
   text-align: center;
-  padding: 30px 0;
+  padding: var(--s-5) 0;
 }
 </style>

@@ -1,0 +1,39 @@
+/**
+ * 四种地面材质的预览漆。
+ *
+ * LibraryPanel（宽 26px 的方块）和 Inspector（18px 的方块）都要画这四个小色块，
+ * 以前两边各写一份，格子尺寸后来悄悄漂移成了 9px vs 7px —— 同一个东西长得不一样了。
+ * 抽到这里共享一份，两边只剩盒子尺寸（那是布局选择，各自定没问题）。
+ *
+ * ⚠️ 这里的色值是硬编码的，**故意不走 design token**：它们是 3D 场景里地面材质
+ * 的真实颜色（见 core/digitalGround.js），小色块必须跟实际渲染结果对得上。
+ * 换成皮肤色号就等于给了用户一个假的预览。和 htmlPanel.js 里 canvas 那几个
+ * 硬编码色是同一个道理 —— canvas / WebGL 读不到 CSS 变量。
+ */
+
+.sw-grid {
+  background-color: #0a1730;
+  background-image:
+    linear-gradient(#1e6bff 1px, transparent 1px),
+    linear-gradient(90deg, #1e6bff 1px, transparent 1px);
+  background-size: 9px 9px;
+}
+
+.sw-solid {
+  background: #1c2635;
+}
+
+.sw-serverRoom {
+  background-color: #20262f;
+  background-image:
+    linear-gradient(#4a5870 1.5px, transparent 1.5px),
+    linear-gradient(90deg, #4a5870 1.5px, transparent 1.5px);
+  background-size: 12px 12px;
+}
+
+.sw-digital {
+  background-color: #041018;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgb(0 229 255 / 90%) 0, rgb(0 229 255 / 15%) 45%, transparent 60%),
+    repeating-radial-gradient(circle at 50% 50%, rgb(0 229 255 / 55%) 0 1px, transparent 1px 6px);
+}

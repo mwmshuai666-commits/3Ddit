@@ -2,13 +2,24 @@
 /**
  * 工具栏「导出」菜单。
  *
- * 三个入口的区别就是「资源怎么带走」，用哪個取决于场景要去哪儿：
+ * 三个入口的区别就是「资源怎么带走」，用哪个取决于场景要去哪儿：
  *   - 单文件 HTML：模型和 Babylon 全内嵌，双击 / iframe 即用，别的技术栈也能接
  *   - 完整包 ZIP：scene.json + models/ + 贴图 + README，适合在项目里长期维护
  *   - 场景 JSON：只要文档，模型自己拷，适合接自己的构建流程
+ *
+ * 导出需要登录（编辑器其余功能不用）。门禁就在 run() 开头：没登录就记住
+ * 用户点的是哪一项、弹登录框，登进去之后自动接着跑那一项——不让用户再点一次。
+ *
+ * ⚠️ 这是一个「产品层门禁」，不是安全边界：三个 exporter 目前都不连服务器，
+ * 令牌只用于 /auth/me、/auth/logout。要把它变成真边界（没有票就不给下载），
+ * 得有个服务端接口发导出票据，那是下一件事，别把这里的判断当防刷手段用。
  */
 import { ref, onBeforeUnmount } from 'vue'
-import { EXPORTERS, exportSceneHtml, exportSceneJson, exportSceneZip } from '../export/exportScene'
+import { exportSceneHtml, exportSceneJson, exportSceneZip } from '../export/exportScene'
+import { auth } from '../../store/auth'
+import { UnauthorizedError } from '../../api/http'
+import Icon from './Icon.vue'
+import LoginDialog from './LoginDialog.vue'
 
 const ITEMS = [
   {
@@ -35,18 +46,39 @@ const open = ref(false)
 const busy = ref(null)
 const toast = ref('')
 const warn = ref('')
+/** 登录框开关，和「登录成功后要接着跑哪一项」 */
+const loginOpen = ref(false)
+let pending = null
 let toastTimer = null
 
 async function run(item) {
   if (busy.value) return
+
+  // 门禁：未登录就先记住这一项，弹登录框，登完自动续上
+  if (auth.status !== 'authed') {
+    pending = item
+    open.value = false
+    loginOpen.value = true
+    return
+  }
+
   busy.value = item.key
   warn.value = ''
+  toast.value = ''
   try {
     const result = await item.run()
     toast.value = result?.message || '已导出'
     warn.value = result?.warning || ''
   } catch (err) {
     console.error('[export]', err)
+    // 导出中途 token 过期了（比如在别的标签页登出）：弹登录框，登完重试这一项。
+    // 目前的三个 exporter 全是纯客户端运算、不发请求，所以这条分支暂时走不到——
+    // 留着是为了哪天导出要读服务端资源时不用回头翻这里。
+    if (err instanceof UnauthorizedError) {
+      pending = item
+      loginOpen.value = true
+      return
+    }
     toast.value = `导出失败：${err?.message || err}`
     warn.value = ''
   } finally {
@@ -57,6 +89,16 @@ async function run(item) {
       warn.value = ''
     }, warn.value ? 12000 : 5000)
   }
+}
+
+/** 登录成功：接着跑被门禁拦下的那一项 */
+async function onLoggedIn() {
+  loginOpen.value = false
+  const item = pending
+  pending = null
+  // 让弹窗先收起来再跑导出，否则会看到登录框压在导出 toast 上面
+  await new Promise((r) => setTimeout(r, 0))
+  if (item) run(item)
 }
 
 function toggle() {
@@ -78,7 +120,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="export-menu">
-    <button class="tool-btn primary" :disabled="busy" @click="toggle">
+    <button
+      class="tool-btn primary"
+      :disabled="busy"
+      :title="auth.status === 'authed' ? '导出场景' : '需要登录后才能导出'"
+      @click="toggle"
+    >
+      <Icon v-if="auth.status !== 'authed'" name="lock" :size="12" />
       {{ busy ? '导出中…' : '导出' }}
     </button>
 
@@ -90,7 +138,10 @@ onBeforeUnmount(() => {
         :disabled="busy"
         @click="run(item); open = false"
       >
-        <span class="export-label">{{ item.label }}</span>
+        <span class="export-label">
+          <Icon v-if="auth.status !== 'authed'" name="lock" :size="11" />
+          {{ item.label }}
+        </span>
         <span class="export-desc">{{ item.desc }}</span>
       </button>
     </div>
@@ -101,6 +152,8 @@ onBeforeUnmount(() => {
         <div v-if="warn" class="export-warn">{{ warn }}</div>
       </div>
     </transition>
+
+    <LoginDialog :open="loginOpen" @logged-in="onLoggedIn" @close="loginOpen = false" />
   </div>
 </template>
 
@@ -110,76 +163,88 @@ onBeforeUnmount(() => {
 }
 .export-pop {
   position: absolute;
-  top: 36px;
+  top: 34px;
   right: 0;
-  z-index: 20;
+  z-index: var(--z-pop);
   width: 320px;
-  padding: 6px;
+  padding: var(--s-1);
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: #161c29;
-  border: 1px solid #2a3346;
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  background: var(--c-pop);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
 }
 .export-item {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 9px 10px;
+  gap: var(--s-1);
+  padding: var(--s-2) 10px;
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  color: #c6d0e0;
+  color: var(--t-body);
 }
 .export-item:hover {
-  background: #1f2a3d;
+  background: var(--c-active);
 }
 .export-item:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .export-label {
-  font-size: 12.5px;
-  color: #e6ecf5;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-sm);
+  color: var(--t-strong);
+}
+.export-label .icon {
+  color: var(--t-faint);
 }
 .export-desc {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
-  color: #7b89a3;
+  color: var(--t-muted);
 }
 .export-toast {
   position: absolute;
   top: 38px;
   right: 0;
-  z-index: 19;
+  z-index: var(--z-toast);
   width: 320px;
-  padding: 8px 10px;
-  font-size: 11.5px;
+  padding: var(--s-2) 10px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
-  color: #b6f0c6;
-  background: #14261c;
-  border: 1px solid #24513a;
-  border-radius: 6px;
+  color: var(--ok);
+  background: var(--ok-soft);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--r-sm);
 }
 .export-toast.warn {
-  color: #f0dfae;
-  background: #262014;
-  border-color: #56492a;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
 }
 .export-warn {
-  margin-top: 4px;
-  color: #cbb27a;
+  margin-top: var(--s-1);
+  color: var(--warn);
 }
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.25s ease;
+  transition: opacity var(--dur) var(--ease);
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
 }
 </style>

@@ -9,7 +9,14 @@
  */
 
 import { editor, getAssetRecords } from '../store/editor'
-import { buildExportDoc, download, fetchGroundTextureDataUrls, loadPlayerBundle, stamp } from './sceneExport.js'
+import {
+  buildExportDoc,
+  download,
+  fetchGroundTextureDataUrls,
+  loadPlayerBundle,
+  playerBundleHasGroundTextures,
+  stamp,
+} from './sceneExport.js'
 import { buildStandaloneHtml } from './standaloneHtml.js'
 import { buildSceneBundleZip } from './bundleZip.js'
 
@@ -40,7 +47,7 @@ export async function exportSceneJson() {
   download(new Blob([json], { type: 'application/json' }), stamp('json'))
   return {
     message: `scene.json 已导出（${humanSize(json.length)}）`
-      + (assets.length ? `，含 ${assets.length} 个模型引用` : ''),
+      + (assets.length ? `，含 ${assets.length} 个资源引用` : ''),
     warning: report(warnings.concat(missing.length ? ['模型文件需随 models/ 目录一起拷贝（完整包 ZIP 已带好）'] : [])),
   }
 }
@@ -49,7 +56,10 @@ export async function exportSceneJson() {
 export async function exportSceneHtml() {
   const playerBundle = await loadPlayerBundle()
   const { doc, assets, missing, warnings } = await collect('embedded')
-  const groundTextures = await fetchGroundTextureDataUrls()
+  // 库 1.1 起播放器包里就有四张数字地板贴图了，只有旧构建才需要自己再嵌一遍
+  const groundTextures = (await playerBundleHasGroundTextures(playerBundle))
+    ? []
+    : await fetchGroundTextureDataUrls()
   const html = buildStandaloneHtml({ doc, playerBundle, groundTextures })
   download(new Blob([html], { type: 'text/html' }), stamp('html'))
 
@@ -70,7 +80,7 @@ export async function exportSceneZip() {
   const blob = await buildSceneBundleZip({ doc, assets: pack, missing })
   download(blob, stamp('zip'))
   return {
-    message: `scene.zip 已导出（${humanSize(blob.size)}，含 ${pack.length} 个模型）`,
+    message: `scene.zip 已导出（${humanSize(blob.size)}，含 ${pack.length} 个资源文件）`,
     warning: report(warnings),
   }
 }

@@ -5,7 +5,7 @@
  *
  *   scene.json                 场景文档（models/ 为相对路径，见 README）
  *   models/*.glb               场景用到的模型
- *   assets/utils/*.png         数字科技地板四张贴图
+ *   assets/utils/*.png         数字科技地板四张贴图（备选：播放器已内置同款）
  *   README.md                  接入说明（三步跑起来）
  *
  * 适合要「在项目里维护这份场景」的情况：多个场景可以共用同一批 models/，
@@ -17,6 +17,8 @@ import { fetchAsBytes } from './sceneExport.js'
 import { GROUND_TEXTURE_URLS } from './sceneExport.js'
 
 function bundleReadme({ doc, assets, missing }) {
+  const modelCount = assets.filter((a) => a.file?.startsWith('models/')).length
+  const envCount = assets.filter((a) => a.file?.startsWith('assets/env/')).length
   const lines = [
     '# 数字孪生场景包',
     '',
@@ -27,8 +29,9 @@ function bundleReadme({ doc, assets, missing }) {
     '| 文件 | 说明 |',
     '| --- | --- |',
     '| `scene.json` | 场景文档（纯 JSON，可手工编辑） |',
-    `| \`models/\` | ${assets.length} 个 glb 模型 |`,
-    '| `assets/utils/` | 数字科技地板四张贴图 |',
+    `| \`models/\` | ${modelCount} 个 glb 模型 |`,
+    ...(envCount ? [`| \`assets/env/\` | ${envCount} 张 hdr 环境贴图 |`] : []),
+    '| `assets/utils/` | 数字科技地板四张贴图（播放器已内置同款，这四张是备选） |',
     '',
     '## 跑起来（需要 Babylon 播放器）',
     '',
@@ -47,9 +50,12 @@ function bundleReadme({ doc, assets, missing }) {
     "  const { doc, assetBaseUrl } = await fetchScene('./scene.json')",
     "  mountScene(document.querySelector('#app'), doc, {",
     "    assetBaseUrl,",
-    "    textureBaseUrl: './assets/utils/', // 数字地板贴图",
     '  })',
     '</script>',
+    '',
+    '不需要配 textureBaseUrl：数字科技地板那四张贴图播放器内置了，',
+    '直接就是编辑器里的效果。`assets/utils/` 里那四张是给你换皮用的——',
+    '自己改完图，加载时传 `textureBaseUrl: \'./assets/utils/\'` 就能替换。',
     '',
     '因为要 fetch 本地 JSON，得起一个静态服务器（不能直接双击 html）：',
     '',
@@ -70,8 +76,8 @@ function bundleReadme({ doc, assets, missing }) {
     '{',
     '  "id": "n_xx",',
     '  "name": "能量管道",',
-    '  "kind": "primitive | light | pipe | effect | model",',
-    '  "type": "box | hemispheric | energy | flexiblePipe | glb | ...",',
+    '  "kind": "primitive | light | pipe | effect | model | html",',
+    '  "type": "box | hemispheric | energy | flexiblePipe | glb | html | ...",',
     '  "transform": {',
     '    "position": [0, 0, 0],',
     '    "rotation": [0, 0, 0],   // 角度制，不是弧度',
@@ -83,6 +89,19 @@ function bundleReadme({ doc, assets, missing }) {
     '',
     '模型节点靠 `props.assetId` 关联 `assets[]` 里的条目，播放器按 `file` 字段',
     '拼出 `models/xxx.glb` 加载。删掉某个节点 / 改 transform 都可以直接改 JSON。',
+    '',
+    '环境天空盒在 `scene.environment`（用了 `assets[]` 里的 hdr 条目）：',
+    '',
+    '```jsonc',
+    '// scene.json',
+    '{',
+    '  "environment": {',
+    '    "type": "hdr",',
+    '    "assetId": "env_1",        // 对应 assets[] 里的条目',
+    '    "props": { "skybox": true, "intensity": 1, "rotation": 0 }',
+    '  }',
+    '}',
+    '```',
     '',
   ]
   if (missing.length) {
@@ -111,7 +130,7 @@ export async function buildSceneBundleZip({ doc, assets, missing = [] }) {
     })
   }
 
-  // 数字地板贴图：与编辑器 public/utils 保持一致
+  // 数字地板贴图：与编辑器 public/utils 保持一致（播放器已内置，这里作为可替换的备选）
   const textures = await Promise.all(
     GROUND_TEXTURE_URLS.map((url, i) =>
       fetchAsBytes(url).then((data) => ({ name: `assets/utils/digitalGround${i + 1}.png`, data })),

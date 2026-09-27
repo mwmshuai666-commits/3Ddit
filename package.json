@@ -17,8 +17,7 @@
     "babylon-datav": "git+ssh://git@gitee.com/mwmzuishuai/babylontoolkit.git",
     "dexie": "^4.4.6",
     "v-scale-screen": "^2.3.0",
-    "vue": "^3.5.42",
-    "vue-router": "^5.3.1"
+    "vue": "^3.5.42"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
