@@ -658,8 +658,59 @@ export const HTML_CATALOG = [
   },
 ]
 
-/* ---------------- 环境天空盒 ---------------- */
+/**
+ * 网页面板：场景里放一块「真网页」，内容是盖在 canvas 上的 <iframe> 浮层。
+ *
+ * 和 HTML 面板的区别就在这儿 —— HTML 面板是把片段栅格化成贴图，
+ * <iframe> 画不出来（data: 形式的 SVG 被浏览器当静态图片解析，
+ * 不建嵌套浏览上下文、不加载外链）；网页面板每帧把 DOM iframe 的 matrix3d
+ * 按平面投影算出来，页面是活的。
+ *
+ * 两条绕不开的限制：
+ *   1. 永远贴在 canvas 之上，3D 物体挡不住它（没有深度遮挡）；
+ *   2. 目标站点可以用 X-Frame-Options / CSP frame-ancestors 拒绝被嵌入，
+ *      这时 iframe 是一片空白 —— 纯浏览器策略，绕不过去。
+ */
+export const WEB_PANEL_FORM = [
+  { key: 'url', label: '网页地址', type: 'text', placeholder: 'https://…' },
+  { key: 'width', label: '宽(场景单位)', type: 'number', min: 0.1, step: 0.1 },
+  { key: 'height', label: '高(场景单位)', type: 'number', min: 0.1, step: 0.1 },
+  {
+    key: 'interactive',
+    label: '可交互',
+    type: 'switch',
+    hint: '打开：点击和滚轮都给网页。关闭：指着面板拖动画布照样转相机。'
+      + '打不开「点不动」时先看网页是不是被对方站点拒绝嵌入（X-Frame-Options / CSP），那种情况页面是空白的。',
+  },
+  {
+    key: 'mode',
+    label: '朝向',
+    type: 'select',
+    options: [
+      { label: '3D 面板', value: '3d' },
+      { label: '始终朝你', value: 'billboard' },
+    ],
+  },
+]
 
+export const WEB_CATALOG = [
+  {
+    kind: 'web',
+    type: 'web',
+    name: '网页面板',
+    icon: '▣',
+    defaultProps: {
+      url: 'https://www.example.com',
+      width: 4,
+      height: 2.4,
+      interactive: true, // 默认可点：见 WEB_PANEL_FORM 里「可交互」的说明
+      mode: '3d',
+    },
+    form: WEB_PANEL_FORM,
+  },
+]
+
+/* ---------------- 环境天空盒 ---------------- */
 export const ENV_DEFAULT_PROPS = { skybox: true, intensity: 1, rotation: 0, blur: 0 }
 
 /** 文档里 scene.environment 的默认值（无环境，只用纯色背景） */
@@ -684,6 +735,7 @@ const ALL_GROUPS = [
   ...PIPE_CATALOG.map((c) => ({ kind: 'pipe', ...c })),
   ...DATAV_CATALOG.map((c) => ({ kind: 'effect', ...c })),
   ...HTML_CATALOG,
+  ...WEB_CATALOG,
 ]
 
 /** 新建 HTML 元素节点（HTML 内容来自左侧面板的输入框） */
@@ -703,8 +755,24 @@ export function createHtmlNode(source = HTML_DEFAULT_SOURCE, size = {}) {
   }
 }
 
-export function findCatalog(kind, type) {
-  return ALL_GROUPS.find((c) => c.kind === kind && c.type === type)
+/** 新建网页面板节点（网址来自左侧面板的输入框） */
+export function createWebNode(url = WEB_CATALOG[0].defaultProps.url, size = {}) {
+  return {
+    id: genId(),
+    name: '网页面板',
+    kind: 'web',
+    type: 'web',
+    parentId: null,
+    transform: IDENTITY_TRANSFORM(),
+    props: {
+      ...WEB_CATALOG[0].defaultProps,
+      url: String(url || '').trim(),
+      ...size,
+    },
+  }
+}
+
+export function findCatalog(kind, type) {  return ALL_GROUPS.find((c) => c.kind === kind && c.type === type)
 }
 
 export function findGroundCatalog(type) {

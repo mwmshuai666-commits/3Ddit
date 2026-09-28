@@ -47,7 +47,7 @@ import {
   setPipeParticles,
 } from './pipeBuilder'
 import { createDigitalGround, disposeDigitalGround, updateDigitalGroundProps } from './digitalGround'
-import { createHtmlPanel } from './htmlPanel'
+import { createHtmlPanel, createWebPanel } from './htmlPanel'
 
 registerBuiltInLoaders() // glTF / glb / obj 等解析器注册到 SceneLoader
 
@@ -67,6 +67,17 @@ const SkyboxSize = 1000
 
 const round3 = (v) => Math.round(v * 1000) / 1000
 
+/**
+ * 初始取景。以前 beta 取 π/2.8≈64°、半径 0.45×地面、视线盯在 y=1，
+ * 相机比垂直视锥半角（默认焦距 0.8rad 时约 22.9°）还多俯了 20 多度，
+ * 地平线被顶到画面外面 —— 一进场满屏都是地板，就是俗称的「头朝下」。
+ * 现在把俯角压平、半径拉远、视点抬高一点：地平线落在画面中上部，
+ * 地面只占下半幅。
+ */
+const INIT_BETA = Math.PI / 2.46 // 约 73°，从 +Y 轴算起；90° 才是完全平视
+const INIT_RADIUS_RATIO = 0.62 // 初始机位半径 = 地面尺寸 × 这个
+const INIT_TARGET_Y_RATIO = 0.025 // 视线瞄准点高度 = 地面尺寸 × 这个
+
 /** 几何体落位时相对地面的 y 偏移（让底部贴着地面） */
 function groundOffsetY(type, props) {
   switch (type) {
@@ -80,6 +91,7 @@ function groundOffsetY(type, props) {
     case 'torus':
       return props.thickness
     case 'html':
+    case 'web':
       // HTML 面板的平面中心在 wrapper 原点，抬高半个高度才是「贴地挂着」
       return (Number(props.height) || 2.4) / 2
     default:
@@ -103,6 +115,9 @@ export default class EditorEngine {
 
     this.engine = new Engine(canvas, true, { antialias: true, alpha: false }, true)
     this.scene = new Scene(this.engine)
+    // 网页面板的 <iframe> 浮层挂这儿：canvas 的父容器（.viewport，position:relative），
+    // 浮层铺满它就和 canvas 完全重合
+    this.overlayContainer = canvas?.parentElement || null
     // 这里以前写的是 scene.useLogarithmicDepth = true，Babylon 9 的 Scene 上没这个字段，
     // 赋值只是挂个没人读的属性，属于无效代码（已删）。对数深度现在是逐材质的
     // material.useLogarithmicDepth，要开就得给每个材质都开，本项目不需要。
@@ -169,9 +184,10 @@ export default class EditorEngine {
     this.camera = new ArcRotateCamera(
       'editorCamera',
       -Math.PI / 2,
-      Math.PI / 3.2,
+      INIT_BETA,
       40,
-      new Vector3(0, 1, 0),
+      // 文档还没加载、地面尺寸未知，先按默认 200 的地面给个取景点
+      new Vector3(0, INIT_TARGET_Y_RATIO * 200, 0),
       this.scene,
     )
     this.camera.minZ = 0.1
@@ -247,12 +263,12 @@ export default class EditorEngine {
     pending.push(this._restoreEnvironment(doc.scene.environment))
     await Promise.all(pending)
 
-    // 相机取景：按地面大小给一个合理的初始视角
+    // 相机取景：按地面大小给一个合理的初始视角（俯角别压太低，见 INIT_BETA 注释）
     const size = doc.scene.ground.props.size || 200
     this.camera.alpha = -Math.PI / 2
-    this.camera.beta = Math.PI / 3.2
-    this.camera.radius = Math.max(20, size * 0.45)
-    this.camera.target.set(0, 1, 0)
+    this.camera.beta = INIT_BETA
+    this.camera.radius = Math.max(20, size * INIT_RADIUS_RATIO)
+    this.camera.target.set(0, Math.max(1, size * INIT_TARGET_Y_RATIO), 0)
   }
 
   /* ============ 地面 ============ */
@@ -600,6 +616,14 @@ export default class EditorEngine {
       entry.material = entry.panel.material
       entry.object.parent = wrapper
       entry.object.metadata = { nodeId: node.id }
+    } else if (node.kind === 'web') {
+      // 网页面板：平面只负责画外框，内容是盖在 canvas 上的真 <iframe>，
+      // 挂载点用 canvas 的父元素（.viewport 是 position:relative，正好严丝合缝）
+      entry.panel = createWebPanel(this.scene, node.props, this.overlayContainer || null)
+      entry.object = entry.panel.mesh
+      entry.material = entry.panel.material
+      entry.object.parent = wrapper
+      entry.object.metadata = { nodeId: node.id }
     }
 
     this._applyTransform(wrapper, node.transform)
@@ -769,8 +793,8 @@ export default class EditorEngine {
       entry.particleSpeed = Number(props.particleSpeed) || 0
     } else if (entry.kind === 'effect') {
       this._applyEffectProps()
-    } else if (entry.kind === 'html') {
-      // update 内部会判断「尺寸 / 朝向 / HTML 内容有没有真变」，重复调用不重画
+    } else if (entry.kind === 'html' || entry.kind === 'web') {
+      // update 内部会判断「尺寸 / 朝向 / 内容有没有真变」，重复调用不重画
       entry.panel?.update(props)
     }
   }
@@ -830,7 +854,7 @@ export default class EditorEngine {
       // 网格由 Vue 组件卸载时释放；这里只解除选中态的包围盒
       if (entry.object) entry.object.showBoundingBox = false
       entry.object?.dispose()
-    } else if (entry.kind === 'html') {
+    } else if (entry.kind === 'html' || entry.kind === 'web') {
       entry.panel?.dispose()
       entry.object = null
       entry.material = null
@@ -907,7 +931,7 @@ export default class EditorEngine {
   _setEntryHighlight(entry, on) {
     if (entry.kind === 'primitive' && entry.object) {
       this._setMeshHighlight(entry.object, on)
-    } else if (entry.kind === 'html' && entry.object) {
+    } else if ((entry.kind === 'html' || entry.kind === 'web') && entry.object) {
       // 面板描边会被 DynamicTexture 的透明区域吃掉一部分，但足够看出选中
       this._setMeshHighlight(entry.object, on)
     } else if (entry.kind === 'pipe' && entry.visual) {
@@ -991,7 +1015,7 @@ export default class EditorEngine {
     this.camera.target.set(p.x, Math.max(p.y, 1), p.z)
 
     let bounds = null
-    if (entry.kind === 'primitive' || entry.kind === 'html') {
+    if (entry.kind === 'primitive' || entry.kind === 'html' || entry.kind === 'web') {
       bounds = entry.object.getHierarchyBoundingVectors?.()
     } else if (entry.kind === 'pipe' && entry.visual?.tube) {
       bounds = entry.visual.tube.getHierarchyBoundingVectors?.()

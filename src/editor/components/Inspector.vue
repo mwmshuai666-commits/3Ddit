@@ -60,6 +60,7 @@ const KIND_TAGS = {
   pipe: '管道',
   effect: '特效',
   html: 'HTML',
+  web: '网页',
 }
 
 function kindTag(kind) {
@@ -212,10 +213,19 @@ function numInput(fn, evt, field) {
 
       <section v-if="nodeForm.length" class="insp-section">
         <h4>参数</h4>
-        <div v-for="f in nodeForm" :key="f.key" class="form-row">
+        <div v-for="f in nodeForm" :key="f.key" class="form-row" :title="f.hint || ''">
           <label>{{ f.label }}</label>
           <input
-            v-if="f.type === 'color'"
+            v-if="f.type === 'text'"
+            type="text"
+            class="text-input"
+            :placeholder="f.placeholder"
+            :value="node.props[f.key]"
+            spellcheck="false"
+            @input="updateNodeProps(node.id, f.key, $event.target.value)"
+          />
+          <input
+            v-else-if="f.type === 'color'"
             type="color"
             :value="node.props[f.key]"
             @input="updateNodeProps(node.id, f.key, $event.target.value)"
@@ -226,6 +236,7 @@ function numInput(fn, evt, field) {
             :checked="!!node.props[f.key]"
             @change="updateNodeProps(node.id, f.key, $event.target.checked)"
           />
+          <em v-if="f.hint" class="field-hint">{{ f.hint }}</em>
           <select
             v-else-if="f.type === 'select'"
             class="select-input"
@@ -294,6 +305,18 @@ function numInput(fn, evt, field) {
   background: var(--c-active);
   border: 1px solid var(--c-line);
 }
+.text-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-ctrl);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--t-strong);
+  background: var(--c-viewport);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+}
 .text-area {
   width: 100%;
   box-sizing: border-box;
@@ -351,6 +374,18 @@ function numInput(fn, evt, field) {
   font-size: var(--fs-sm);
   color: var(--t-muted);
   flex-shrink: 0;
+}
+/* 字段备注（可选）：换到第二行显示，别把 label 挤成两行 */
+.form-row {
+  flex-wrap: wrap;
+}
+.field-hint {
+  flex: 1 0 100%;
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+  color: var(--t-faint);
+  font-style: normal;
+  margin-top: 2px;
 }
 /* 输入框不再写死 130px：占满标签剩下的宽度，长数值 / 长名称都不会被裁掉 */
 .form-row input[type='number'],

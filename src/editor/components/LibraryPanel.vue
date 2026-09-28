@@ -22,6 +22,7 @@ import {
   uploadAsset,
   addModelInstance,
   addHtmlPanel,
+  addWebPanel,
   deleteAsset,
   modelAssets,
   envAssets,
@@ -33,10 +34,13 @@ import { iconOf } from './icons'
 import Icon from './Icon.vue'
 
 const SECTION_KEY = 'twinEditor.libSections'
-const SECTION_KEYS = ['ground', 'primitive', 'light', 'effect', 'model', 'html', 'env']
+const SECTION_KEYS = ['ground', 'primitive', 'light', 'effect', 'model', 'html', 'web', 'env']
 
 function readOpenState() {
-  const fallback = { ground: true, primitive: false, light: false, effect: false, model: false, html: false, env: false }
+  const fallback = {
+    ground: true, primitive: false, light: false, effect: false, model: false,
+    html: false, web: false, env: false,
+  }
   try {
     const saved = JSON.parse(localStorage.getItem(SECTION_KEY) || 'null')
     if (!saved || typeof saved !== 'object') return fallback
@@ -94,10 +98,46 @@ function importHtml() {
     window.alert('先填一段 HTML，再点导入')
     return
   }
+  // 粘了 <iframe> 的话先提醒一声：栅格化画不出嵌套浏览上下文，
+  // 用户以为自己导进去了，结果是一块空白板
+  if (/<iframe[\s>]/i.test(htmlSource.value)) {
+    window.alert('HTML 面板画不出 <iframe>（栅格化时浏览器不加载嵌套页面）。\n'
+      + '要放真网页，请用下面「网页导入」那一栏，填网址。')
+    return
+  }
   addHtmlPanel(htmlSource.value, {
     width: Number(htmlWidth.value) || 4,
     height: Number(htmlHeight.value) || 2.4,
     mode: htmlMode.value,
+  })
+}
+
+/* ---- 网页导入（真 iframe 浮层） ---- */
+
+const webUrl = ref('')
+const webWidth = ref(4)
+const webHeight = ref(2.4)
+// 默认打开交互：导入一块网页却点不动，是最容易踩的坑（pointer-events:none 时
+// 点击全被 canvas 收走，页面收不到）。代价是「指着面板拖不动相机」，
+// 想转视角就把这个勾去掉，或者从面板外面起拖。
+const webInteractive = ref(true)
+const webMode = ref('3d')
+
+function importWeb() {
+  const url = webUrl.value.trim()
+  if (!url) {
+    window.alert('先填一个网页地址，再点导入')
+    return
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    window.alert('地址要以 http:// 或 https:// 开头')
+    return
+  }
+  addWebPanel(url, {
+    width: Number(webWidth.value) || 4,
+    height: Number(webHeight.value) || 2.4,
+    interactive: webInteractive.value,
+    mode: webMode.value,
   })
 }
 
@@ -307,6 +347,53 @@ function fmtSize(bytes) {
           <code>&lt;br&gt;</code>、<code>&amp;nbsp;</code> 会自动转成能渲染的写法；
           但 <code>&lt;script&gt;</code>、外链图片字体、canvas / 视频不会生效
           （渲染失败会自动退化成纯文本，内容不会丢）。大小和朝向导入后还能在右侧属性里改。
+        </p>
+      </div>
+    </section>
+
+    <!-- 网页导入（DOM iframe 浮层） -->
+    <section class="lib-section" :class="{ closed: !open.web }">
+      <h3 @click="toggle('web')">
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.web }" />
+        <Icon name="globe" :size="13" />
+        网页导入 <em>· 场景里放一块真网页</em>
+      </h3>
+      <div v-show="open.web" class="lib-body">
+        <input
+          v-model.trim="webUrl"
+          class="html-input"
+          type="text"
+          spellcheck="false"
+          placeholder="https://www.example.com"
+        />
+        <div class="html-row">
+          <label>宽(场景单位)</label>
+          <input v-model.number="webWidth" type="number" min="0.1" step="0.1" />
+          <label>高</label>
+          <input v-model.number="webHeight" type="number" min="0.1" step="0.1" />
+        </div>
+        <div class="html-row">
+          <label>朝向</label>
+          <select v-model="webMode">
+            <option value="3d">3D 面板</option>
+            <option value="billboard">始终朝你</option>
+          </select>
+        </div>
+        <label class="html-check">
+          <input v-model="webInteractive" type="checkbox" />
+          <span>可交互（打开：点击/滚轮给网页；关闭：指着面板也能拖相机）</span>
+        </label>
+        <button class="upload-btn solid" @click="importWeb">
+          <Icon name="plus" :size="13" />
+          导入到场景
+        </button>
+        <p class="html-tip">
+          这里放的是真的 <code>&lt;iframe&gt;</code>：网页是活的，能滚动、能点、能跑图表和视频
+          （HTML 面板是栅格化贴图，<code>&lt;iframe&gt;</code> 画不出来）。
+          「可交互」默认是打开的 —— 不打开的话点击全被画布收走，页面根本收不到。
+          另外两条限制要知道：它永远贴在画布上面，3D 物体挡不住它；
+          对方站点可以用 <code>X-Frame-Options</code> / CSP 拒绝被嵌入，那样就只有一片空白，
+          这种时候不是没点中，是页面压根没加载出来。
         </p>
       </div>
     </section>
@@ -712,6 +799,19 @@ function fmtSize(bytes) {
   font-family: var(--font-mono);
   font-size: var(--fs-2xs);
   color: var(--t-muted);
+}
+.html-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--t-muted);
+  cursor: pointer;
+}
+.html-check input {
+  flex-shrink: 0;
 }
 
 /* ---- 环境天空盒 ---- */

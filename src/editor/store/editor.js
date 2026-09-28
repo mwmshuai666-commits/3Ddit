@@ -16,6 +16,7 @@ import {
   createNode,
   createModelNode,
   createHtmlNode,
+  createWebNode,
   findCatalog,
   findGroundCatalog,
   genId,
@@ -139,6 +140,7 @@ export async function initEditor(canvas) {
       addFromCatalog,
       addModelInstance,
       addHtmlPanel,
+      addWebPanel,
       uploadAsset,
       uploadEnvAsset,
       setEnvironmentAsset,
@@ -191,6 +193,22 @@ export function addHtmlPanel(source, size = {}) {
   const engine = getEngine()
   if (!engine || !editor.loaded) return null
   const node = createHtmlNode(source || '', size)
+  node.transform.position = engine.suggestPlacement(node)
+  editor.doc.nodes.push(node)
+  engine.addNode(node)
+  selectNode(node.id)
+  return node.id
+}
+
+/**
+ * 左侧「网址导入」：往场景里放一块真网页（DOM <iframe> 浮层）。
+ * @param {string} url 网页地址
+ * @param {{width?:number, height?:number, interactive?:boolean, mode?:'3d'|'billboard'}} size
+ */
+export function addWebPanel(url, size = {}) {
+  const engine = getEngine()
+  if (!engine || !editor.loaded) return null
+  const node = createWebNode(url || '', size)
   node.transform.position = engine.suggestPlacement(node)
   editor.doc.nodes.push(node)
   engine.addNode(node)
