@@ -581,6 +581,11 @@ export default class EditorEngine {
     return !!this.entries.get(nodeId)?.loaded
   }
 
+  /** 把容器根节点从 wrapper 摘回场景根：addModelNode 挂过来时容器的层级就不完整了 */
+  _detachContainerRoots(container) {
+    for (const root of container.rootNodes) root.parent = null
+  }
+
   _instantiate(node) {
     const wrapper = new TransformNode(`w_${node.id}`, this.scene)
     wrapper.metadata = { nodeId: node.id }
@@ -845,6 +850,9 @@ export default class EditorEngine {
       // 加载过程中删除：标记取消，异步回来后由 addModelNode 自行释放
       if (entry.loading) entry.cancelled = true
       if (entry.container) {
+        // 不先摘回来，removeAllFromScene 的层级自检会刷
+        // "Node __root__ has a parent that is not in the container"
+        this._detachContainerRoots(entry.container)
         entry.container.removeAllFromScene()
         entry.container.dispose()
       }
