@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, onBeforeUnmount } from 'vue'
 import {
   editor,
   findNode,
@@ -53,6 +53,27 @@ const transformParts = [
   { key: 'scaling', label: '缩放', step: 0.1 },
 ]
 const axes = ['X', 'Y', 'Z']
+const panelWidth = ref(292)
+const collapsed = ref(false)
+const resizing = ref(false)
+
+function resizePanel(event) {
+  if (!resizing.value) return
+  panelWidth.value = Math.max(230, Math.min(460, window.innerWidth - event.clientX - 12))
+}
+function stopResize() {
+  resizing.value = false
+  document.removeEventListener('pointermove', resizePanel)
+  document.removeEventListener('pointerup', stopResize)
+}
+function startResize(event) {
+  if (collapsed.value) return
+  resizing.value = true
+  document.addEventListener('pointermove', resizePanel)
+  document.addEventListener('pointerup', stopResize)
+  event.preventDefault()
+}
+onBeforeUnmount(stopResize)
 
 const KIND_TAGS = {
   light: '灯光',
@@ -74,7 +95,14 @@ function numInput(fn, evt, field) {
 </script>
 
 <template>
-  <aside class="inspector">
+  <aside class="inspector" :class="{ collapsed, resizing }" :style="{ width: `${collapsed ? 48 : panelWidth}px` }">
+    <div class="insp-shell-head">
+      <button class="glass-icon-btn insp-toggle" :aria-label="collapsed ? '展开属性栏' : '收起属性栏'" :aria-expanded="!collapsed" :title="collapsed ? '展开属性栏' : '收起属性栏'" @click="collapsed = !collapsed">
+        <span>{{ collapsed ? '‹' : '›' }}</span>
+      </button>
+      <span v-if="!collapsed">属性面板</span>
+    </div>
+    <div v-if="!collapsed" class="insp-content">
     <!-- ===== 场景设置（未选中或选中地面） ===== -->
     <template v-if="isGround">
       <div class="insp-title">场景设置</div>
@@ -274,18 +302,76 @@ function numInput(fn, evt, field) {
     <template v-else>
       <div class="insp-empty">节点不存在或已被删除</div>
     </template>
+    </div>
+    <div v-if="!collapsed" class="insp-resize-handle" title="拖动调整宽度" @pointerdown="startResize"></div>
   </aside>
 </template>
 
 <style scoped>
 .inspector {
-  width: var(--w-panel);
+  position: relative;
+  width: 292px;
+  min-width: 48px;
   flex-shrink: 0;
   background: var(--c-panel);
-  border-left: 1px solid var(--c-line);
-  overflow-y: auto;
-  padding: var(--s-3);
+  border: 1px solid #292a2c;
+  border-radius: 22px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: width 180ms ease;
 }
+.inspector.resizing { transition: none; }
+.insp-shell-head {
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--t-strong);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  border-bottom: 1px solid rgb(255 255 255 / 6%);
+}
+.insp-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  flex: 1;
+}
+.inspector.collapsed .insp-shell-head { justify-content: center; padding: 0; }
+.insp-resize-handle {
+  position: absolute;
+  z-index: 2;
+  left: -3px;
+  top: 48px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.insp-resize-handle:hover,
+.inspector.resizing .insp-resize-handle { background: var(--accent); opacity: .72; }
+.glass-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #f4f5f7;
+  font-size: 20px;
+  line-height: 1;
+  background: linear-gradient(145deg, rgb(255 255 255 / 17%), rgb(255 255 255 / 4%));
+  border: 1px solid rgb(255 255 255 / 19%);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 5px 14px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.glass-icon-btn:hover { transform: translateY(-1px); background: rgb(255 255 255 / 16%); border-color: rgb(255 255 255 / 34%); }
+.glass-icon-btn:active { transform: translateY(0) scale(.96); }
+.insp-title { display: none; }
 .insp-title {
   display: flex;
   align-items: center;

@@ -835,7 +835,7 @@ export function createDefaultDocument() {
   return {
     version: SCHEMA_VERSION,
     scene: {
-      background: '#05070d',
+      background: '#303234',
       ground: {
         type: GROUND_CATALOG[0].type,
         props: { ...GROUND_CATALOG[0].defaultProps },

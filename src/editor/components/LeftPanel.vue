@@ -68,11 +68,13 @@ watch(collapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
   display: flex;
   flex-direction: column;
   background: var(--c-panel);
-  border-right: 1px solid var(--c-line);
+  border: 1px solid #292a2c;
+  border-radius: 22px;
+  overflow: hidden;
   transition: width var(--dur) var(--ease);
 }
 .left-panel.collapsed {
-  width: var(--h-toolbar);
+  width: 64px;
 }
 .panel-topbar {
   display: flex;
@@ -142,9 +144,9 @@ watch(collapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
   background: var(--c-raised);
 }
 .panel-tabs button.active {
-  color: var(--accent-hover);
+  color: var(--accent);
   border-bottom-color: var(--accent);
-  background: var(--accent-soft);
+  background: transparent;
 }
 .panel-body {
   flex: 1;

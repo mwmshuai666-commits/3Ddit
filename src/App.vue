@@ -106,11 +106,14 @@ onBeforeUnmount(() => {
   color: var(--t-body);
   font-size: var(--fs-md);
   overflow: hidden;
+  padding: 10px 16px 12px;
 }
 .editor-body {
   flex: 1;
   display: flex;
   min-height: 0;
+  gap: 10px;
+  margin-top: 10px;
 }
 .status-bar {
   height: var(--h-status);
@@ -121,8 +124,9 @@ onBeforeUnmount(() => {
   padding: 0 var(--s-4);
   font-size: var(--fs-xs);
   color: var(--t-muted);
-  background: var(--c-panel);
-  border-top: 1px solid var(--c-line);
+  background: transparent;
+  border-top: 0;
+  padding: 0 6px;
 }
 .status-bar .spacer {
   flex: 1;
@@ -149,5 +153,9 @@ onBeforeUnmount(() => {
 }
 .status-bar .dot.off {
   background: var(--t-faint);
+}
+@media (max-width: 720px) {
+  .editor-shell { padding: 8px; }
+  .editor-body { gap: 6px; margin-top: 6px; }
 }
 </style>

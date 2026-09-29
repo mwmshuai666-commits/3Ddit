@@ -28,29 +28,29 @@
 
 :root {
   /* ---- 背景阶梯：视口最暗 → 浮层最亮 ---- */
-  --c-viewport: #0a0c10; /* 3D 画布（比 app 更深，和工具界面拉开） */
-  --c-app: #101318; /* 编辑器最底层 */
-  --c-panel: #14171e; /* 左右侧栏 / 工具栏 / 状态栏 */
-  --c-raised: #1b1f27; /* 输入框、按钮、行 hover */
-  --c-active: #232834; /* 选中 / 按下 */
-  --c-pop: #191d25; /* 下拉、浮层 */
+  --c-viewport: #111214; /* 3D 画布（比 app 更深，和工具界面拉开） */
+  --c-app: #08090a; /* 编辑器最底层 */
+  --c-panel: #1b1c1e; /* 左右侧栏 / 工具栏 / 状态栏 */
+  --c-raised: #252629; /* 输入框、按钮、行 hover */
+  --c-active: #303135; /* 选中 / 按下 */
+  --c-pop: #202124; /* 下拉、浮层 */
 
   /* ---- 发丝线（分区唯一手段） ---- */
-  --c-line: #232833; /* chrome 边界：工具栏/侧栏/状态栏之间 */
-  --c-line-strong: #2f3644 /* 控件描边、输入框边框 */;
+  --c-line: #292a2d; /* chrome 边界：工具栏/侧栏/状态栏之间 */
+  --c-line-strong: #3a3b3f /* 控件描边、输入框边框 */;
 
   /* ---- 文字：原来的 8 个近似灰收敛成 4 档 ---- */
-  --t-strong: #e9edf4; /* 标题、强 */
-  --t-body: #adb7c7; /* 正文 */
-  --t-muted: #7a8497; /* 次级说明 */
-  --t-faint: #5b6474; /* 占位、空态、最弱 */
+  --t-strong: #f5f5f4; /* 标题、强 */
+  --t-body: #d0d0ce; /* 正文 */
+  --t-muted: #96979a; /* 次级说明 */
+  --t-faint: #68696d; /* 占位、空态、最弱 */
 
   /* ---- 唯一强调色：只用于选中 / 聚焦 / 主按钮 ---- */
-  --accent: #4c8dee;
-  --accent-hover: #6a9ff2;
-  --accent-soft: rgb(76 141 238 / 16%);
-  --accent-line: rgb(76 141 238 / 45%);
-  --on-accent: #fff;
+  --accent: #ffd400;
+  --accent-hover: #ffe14d;
+  --accent-soft: rgb(255 212 0 / 13%);
+  --accent-line: rgb(255 212 0 / 42%);
+  --on-accent: #111;
 
   /* ---- 状态色：只用于状态栏 / toast / 校验提示 ---- */
   --ok: #4aa97b;
@@ -65,9 +65,9 @@
   --danger-line: rgb(212 101 95 / 35%);
 
   /* ---- 圆角：3 档 ---- */
-  --r-xs: 3px; /* kbd、小角标 */
-  --r-sm: 4px; /* 输入框、按钮 */
-  --r-md: 6px; /* 卡片容器、浮层 */
+  --r-xs: 5px; /* kbd、小角标 */
+  --r-sm: 8px; /* 输入框、按钮 */
+  --r-md: 12px; /* 卡片容器、浮层 */
 
   /* ---- 间距：5 档 ---- */
   --s-1: 4px;
@@ -90,9 +90,9 @@
   --h-row: 32px; /* 列表行 */
 
   /* ---- 结构尺寸 ---- */
-  --h-toolbar: 46px;
+  --h-toolbar: 54px;
   --h-status: 26px;
-  --w-panel: 272px;
+  --w-panel: 292px;
 
   /* ---- 层级 ---- */
   --z-pop: 40; /* 下拉浮层 */
@@ -225,3 +225,6 @@ input[type='number'] {
 input[type='number'] {
   font-variant-numeric: tabular-nums;
 }
+
+/* Compact 3D studio responsiveness. */
+@media (max-width: 900px) { :root { --w-panel: 230px; } .status-bar .hint { display: none; } }

@@ -60,8 +60,10 @@ function fmtTime(d) {
   align-items: center;
   gap: var(--s-2);
   padding: 0 var(--s-4);
-  background: var(--c-panel);
-  border-bottom: 1px solid var(--c-line);
+  background: #191a1b;
+  border: 1px solid #292a2c;
+  border-radius: 28px;
+  padding: 0 20px;
 }
 .brand {
   display: flex;
@@ -89,19 +91,23 @@ function fmtTime(d) {
   font-size: var(--fs-sm);
   font-family: inherit;
   color: var(--t-body);
-  background: var(--c-raised);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-sm);
+  background: linear-gradient(145deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 3%));
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 18px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 4px 12px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(12px);
+  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
   cursor: pointer;
 }
 .tool-btn:hover {
-  border-color: var(--accent-line);
+  border-color: rgb(255 255 255 / 28%);
   color: var(--t-strong);
-  background: var(--c-active);
+  background: linear-gradient(145deg, rgb(255 255 255 / 18%), rgb(255 255 255 / 7%));
+  transform: translateY(-1px);
 }
 .tool-btn.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  background: linear-gradient(145deg, rgb(255 212 0 / 25%), rgb(255 212 0 / 9%));
+  border-color: rgb(255 212 0 / 55%);
   color: var(--accent-hover);
 }
 .tool-btn.primary {
@@ -136,5 +142,11 @@ kbd {
 }
 .save-status.saving {
   color: var(--warn);
+}
+@media (max-width: 760px) {
+  .toolbar { gap: 6px; padding: 0 12px; }
+  .brand { font-size: var(--fs-sm); }
+  .tool-group { margin-left: 4px; }
+  .save-status { display: none; }
 }
 </style>

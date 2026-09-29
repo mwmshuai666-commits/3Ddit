@@ -31,7 +31,9 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-width: 0;
-  background: var(--c-viewport);
+  background: radial-gradient(ellipse at 50% 42%, #393a3c 0%, #252628 38%, #111214 100%);
+  border-radius: 22px;
+  overflow: hidden;
 }
 canvas {
   display: block;
@@ -42,11 +44,15 @@ canvas {
 }
 .viewport-hint {
   position: absolute;
-  left: var(--s-4);
-  bottom: var(--s-2);
+  left: 18px;
+  bottom: 14px;
+  padding: 6px 10px;
   font-size: var(--fs-2xs);
   line-height: 1.6;
-  color: var(--t-faint);
+  color: #a2a3a5;
+  background: rgb(20 21 22 / 72%);
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 14px;
   pointer-events: none;
   user-select: none;
 }
