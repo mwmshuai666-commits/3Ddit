@@ -12,7 +12,7 @@
  * 注意：包的 exports 是 {"./components/*": "./src/components/*.vue"}，
  * 写带后缀的路径会拼成 *.vue.vue，所以这里必须写不带后缀的路径。
  */
-import { computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import FlexiblePipe from 'babylon-datav/components/FlexiblePipe'
 import StreamLine from 'babylon-datav/components/StreamLine'
 // 飞线没有用包里的版本：原版的 emissiveTexture 会把颜色饱和成白色、
@@ -23,6 +23,8 @@ import WaveWall from 'babylon-datav/components/WaveWall'
 import { getEngine } from '../core/engineHolder'
 import { datavTextureUrl } from '../core/datavTextures'
 import { findCatalog } from '../schema/sceneSchema'
+import { dataHub } from '../core/dataHub'
+import { evaluateNode } from '../core/binding'
 
 const COMPONENTS = {
   flexiblePipe: FlexiblePipe,
@@ -50,10 +52,34 @@ function mappedPoints() {
   return pts
 }
 
-/** form 里登记的字段 = 传给组件的 props，两边永远一致 */
+/**
+ * 数据注入：effect 节点的画面由这些 Vue 组件渲染，引擎侧拿不到材质句柄，
+ * 所以运行时覆盖走「组件 props」这条路 —— 和 kind:'pipe' 的引擎注入等价，
+ * 同样只覆盖 form 里登记过的 look 级字段，不动几何。
+ *
+ * direction（流向）映射成 speed 的符号：组件侧 speed 取负即反向。
+ */
+const tick = ref(0)
+let unsub = null
+
+/** form 里登记的字段 = 传给组件的 props，两边永远一致（+ 数据注入覆盖） */
 const bindings = computed(() => {
+  tick.value // 数据到达时经订阅回调自增，触发本 computed 重算
   const out = {}
   for (const f of catalog.value?.form || []) out[f.key] = props.node.props[f.key]
+  // 求值本节点的绑定：没绑 / 没数据时是 {}，组件照常吃静态 props
+  const patch = props.node.bindings?.length
+    ? evaluateNode(props.node, dataHub.values)
+    : {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'direction') {
+      out.speed = Math.abs(Number(out.speed) || 1) * value
+    } else if (key in out) {
+      // 只覆盖组件真吃的字段（form 登记过的）；visible/particles 等其余 key
+      // 由引擎侧 setNodeVisible / setPipeParticles 处理，这里不透传
+      out[key] = value
+    }
+  }
   out[catalog.value.pointProp] = mappedPoints()
   const tex = datavTextureUrl(catalog.value?.texture)
   if (tex) out.textureUrl = tex
@@ -98,9 +124,15 @@ onMounted(() => {
   observer = props.scene.onNewMeshAddedObservable.add((mesh) => {
     if (mesh.name === catalog.value?.meshName) Promise.resolve().then(claim)
   })
+  // 数据到达 → 重算 bindings → 组件 props 热更（颜色 / 流向等）
+  unsub = dataHub.subscribe(() => {
+    tick.value += 1
+  })
 })
 
 onBeforeUnmount(() => {
+  unsub?.()
+  unsub = null
   observer?.remove()
   observer = null
   // 组件自身会 dispose mesh / material / texture，这里只解除认领

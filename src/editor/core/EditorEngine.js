@@ -146,13 +146,15 @@ export default class EditorEngine {
           Vector3.TransformNormalToRef(base, entry.wrapper.getWorldMatrix(), tmpDir)
           tmpDir.normalize()
           entry.object.direction.copyFrom(tmpDir)
-        } else if (entry.kind === 'pipe' && entry.visual?.flowTexture) {
+        } else if (entry.kind === 'pipe' && entry.visual?.flowTexture && entry.visible !== false) {
           const v = entry.visual
-          v.flowOffset -= (entry.speed || 0) * dt
+          // dir = 数据注入的流向（-1 反向）；粒子同步取符号，弧长取模自带回绕
+          const dir = entry.dir || 1
+          v.flowOffset -= (entry.speed || 0) * dir * dt
           v.flowTexture.uOffset = v.flowOffset
           // 管内粒子：发射点沿弧长匀速前进，粒子原地滞留淡出 → 一串流光
           if (v.particles) {
-            v.flowHead += (entry.particleSpeed || 0) * dt
+            v.flowHead += (entry.particleSpeed || 0) * dir * dt
             setPipeParticleHead(v, v.flowHead, entry.wrapper.getWorldMatrix())
           }
         }
@@ -258,6 +260,8 @@ export default class EditorEngine {
       } else {
         this._instantiate(node)
       }
+      // 模型节点异步就绪后补一次显隐基线（node.hidden 手动折叠的节点）
+      this._applyHiddenBaseline(node)
     })
     // 环境贴图一起加载：HDR 预滤波要几秒，别把它插在中间串行等
     pending.push(this._restoreEnvironment(doc.scene.environment))
@@ -656,6 +660,16 @@ export default class EditorEngine {
       entry.speed = Number(node.props.speed) || 0
       entry.particleSpeed = Number(node.props.particleSpeed) || 0
       entry.sig = pipeSignature(node.props)
+      // look 级运行时状态：props 是人工基线，数据注入的覆盖值并进来，
+      // 重建后统一重放（见 _rebuildPipe / applyRuntimeValue）
+      entry.look = {
+        color: node.props.color,
+        casingOpacity: node.props.casingOpacity,
+        repeat: node.props.repeat,
+        particleSize: node.props.particleSize,
+      }
+      // 流向：props.dir 手动设置（-1 反向）；数据注入的 direction 走 applyRuntimeValue
+      entry.dir = Number(node.props.dir) < 0 ? -1 : 1
       if (entry.visual?.tube) entry.visual.tube.parent = wrapper
       if (entry.visual?.casing) entry.visual.casing.parent = wrapper
     } else if (node.kind === 'effect') {
@@ -682,6 +696,9 @@ export default class EditorEngine {
 
     this._applyTransform(wrapper, node.transform)
     this.entries.set(node.id, entry)
+    // 显隐基线：node.hidden 是手动设置（SceneTree 眼睛），数据注入的 visible 之后覆盖它
+    entry.visible = true
+    if (node.hidden === true) this.setNodeVisible(node.id, false)
   }
 
   _createPrimitiveMesh(node) {
@@ -759,6 +776,8 @@ export default class EditorEngine {
     entry.sig = pipeSignature(props)
     if (!entry.visual?.tube) return
 
+    // 重建只吃 props，这里把 look 级状态（含注入过的颜色/浓度）整个补回去
+    updatePipeLook(entry.visual, entry.look)
     entry.visual.flowOffset = phase
     entry.visual.flowHead = head
     entry.visual.tube.parent = entry.wrapper
@@ -834,23 +853,109 @@ export default class EditorEngine {
     } else if (entry.kind === 'light') {
       this._applyLightProps(entry.object, entry.type, props)
     } else if (entry.kind === 'pipe') {
+      // look 级状态的唯一容器：props 基线合进来（手动改立即赢），
+      // 数据注入的覆盖值也写它（见 applyRuntimeValue）
+      Object.assign(entry.look, {
+        color: props.color,
+        casingOpacity: props.casingOpacity,
+        repeat: props.repeat,
+        particleSize: props.particleSize,
+      })
       const sig = pipeSignature(props)
       if (sig !== entry.sig) {
         // 折点或几何参数变化 → 重建（CreateTube 的 instance 更新要求路径点数一致）
         this._rebuildPipe(entry, nodeId, props)
       } else {
-        updatePipeLook(entry.visual, props)
+        updatePipeLook(entry.visual, entry.look)
       }
       // 粒子开关 / 颜色 / 大小随时能改；速度只在每帧读，记在 entry 上
       setPipeParticles(this.scene, { id: nodeId, props }, entry.visual)
       entry.speed = Number(props.speed) || 0
       entry.particleSpeed = Number(props.particleSpeed) || 0
+      entry.dir = Number(props.dir) < 0 ? -1 : 1
     } else if (entry.kind === 'effect') {
       this._applyEffectProps()
     } else if (entry.kind === 'html' || entry.kind === 'web') {
       // update 内部会判断「尺寸 / 朝向 / 内容有没有真变」，重复调用不重画
       entry.panel?.update(props)
     }
+  }
+
+  /**
+   * 数据注入统一入口（store.applyBindings → 这里；能量管道的显隐/方向/颜色等）。
+   *
+   * 红线（与 core/binding.js 的头注对齐）：
+   *   - 只做 look 级热更，永不触发几何重建 —— pipeSignature 字段数据不可达；
+   *   - 永不写 node.props：注入值只活在 entry 上，刷新页面 / 导出场景都以静态 props 为准。
+   */
+  applyRuntimeValue(nodeId, key, value) {
+    const entry = this.entries.get(nodeId)
+    if (!entry) return
+    switch (key) {
+      case 'visible':
+        this.setNodeVisible(nodeId, !!value)
+        break
+      case 'direction':
+        // 光带与粒子的滚动方向；负值 = 反向（见渲染循环里的 entry.dir）
+        entry.dir = Number(value) < 0 ? -1 : 1
+        break
+      case 'particles':
+        if (entry.kind === 'pipe' && entry.visual) {
+          setPipeParticles(this.scene, { id: nodeId, props: { particles: !!value } }, entry.visual)
+        }
+        break
+      case 'color':
+      case 'casingOpacity':
+      case 'repeat':
+        if (entry.kind === 'pipe' && entry.visual && entry.look) {
+          Object.assign(entry.look, { [key]: value })
+          updatePipeLook(entry.visual, entry.look)
+        } else if (entry.kind === 'primitive' && entry.material) {
+          entry.material.diffuseColor = Color3.FromHexString(String(value) || '#5b8def')
+        } else if (entry.kind === 'light') {
+          entry.object.diffuse = Color3.FromHexString(String(value) || '#ffffff')
+        } else if (entry.kind === 'effect' && entry.material) {
+          // datav 特效的材质由组件自己管，uniform 名不统一，这里尽力而为
+          const c = Color3.FromHexString(String(value) || '#ffffff')
+          if (entry.material.diffuseColor) entry.material.diffuseColor = c
+          if (entry.material.emissiveColor) entry.material.emissiveColor = c
+        }
+        break
+      default:
+        break
+    }
+  }
+
+  /**
+   * 显隐：手动 node.hidden 与数据注入 visible 共用这一条路。
+   * 注意粒子系统的 emitter 是世界坐标的常驻 Vector3，不吃 wrapper.setEnabled，
+   * 隐藏时必须把 ps 停掉，否则管子消失了光点还在原地飘。
+   */
+  setNodeVisible(nodeId, visible) {
+    const entry = this.entries.get(nodeId)
+    if (!entry || entry.visible === visible) return
+    entry.visible = visible
+    if (entry.kind === 'pipe') {
+      entry.visual?.tube?.setEnabled(visible)
+      entry.visual?.casing?.setEnabled(visible)
+      const ps = entry.visual?.particles?.ps
+      if (ps) {
+        if (visible) ps.start()
+        else ps.stop()
+      }
+    } else {
+      // 其余 kind 的网格 / 灯光 / 面板都挂在 wrapper 下，一把梭
+      entry.wrapper?.setEnabled(visible)
+    }
+  }
+
+  /**
+   * 手动显隐基线：loadDocument 里每个节点实例化后补一次。
+   * _instantiate 内部已经处理过一遍，这里主要兜住异步加载的模型节点
+   * （entry 是 await 之后才就绪的）；没有 hidden 字段时是空操作。
+   */
+  _applyHiddenBaseline(node) {
+    if (node?.hidden === true) this.setNodeVisible(node.id, false)
   }
 
   /**

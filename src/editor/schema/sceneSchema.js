@@ -5,18 +5,24 @@
  * {
  *   version: '0.1.0',
  *   scene: { background, ground: { type, props }, environment: { type, assetId, props } },
+ *   sources: [ { id, type:'http'|'ws'|'manual', url, intervalMs, path } ],  // 数据源定义（可空）
  *   nodes: [
  *     {
  *       id, name,
- *       kind: 'primitive' | 'light' | 'pipe' | 'effect' | 'model' | 'html',
+ *       kind: 'primitive' | 'light' | 'pipe' | 'effect' | 'model' | 'html' | 'web',
  *       type: 'box' | 'sphere' | ... | 'hemispheric' ...,
  *       parentId: null,                      // 预留：层级父子关系
  *       transform: { position:[x,y,z], rotation:[x,y,z] 角度, scaling:[x,y,z] },
- *       props: {}                            // 类型相关参数，见目录 CATALOG
+ *       props: {},                          // 类型相关参数，见目录 CATALOG（人工设定的静态基线）
+ *       hidden: false,                      // 手动显隐（SceneTree 眼睛图标）
+ *       bindings: [],                       // 数据绑定：外部数据 → props 的运行时覆盖（见 core/binding.js）
  *     }
  *   ],
  *   cameras: []                              // 预留：机位书签 / 巡航
  * }
+ *
+ * 数据接入约定：绑定只驱动「look 级」字段（颜色 / 显隐 / 方向 / 光带参数），
+ * 永远不写回 props、永远不碰几何字段（points / radius 等）——见 core/binding.js 头注。
  */
 
 export const SCHEMA_VERSION = '0.1.0'
@@ -336,6 +342,7 @@ export const PIPE_CATALOG = [
       particles: true,
       particleSpeed: 9,
       particleSize: 1,
+      dir: 1, // 流向：1 正向 / -1 反向（数据绑定的 direction 也落这里）
       points: [
         [0, 3, 0],
         [12, 9, 0],
@@ -354,6 +361,15 @@ export const PIPE_CATALOG = [
       { key: 'particles', label: '粒子流动', type: 'switch' },
       { key: 'particleSpeed', label: '粒子速度', type: 'number', min: 0, max: 80, step: 0.5 },
       { key: 'particleSize', label: '粒子大小', type: 'number', min: 0.1, max: 5, step: 0.1 },
+      {
+        key: 'dir',
+        label: '流向',
+        type: 'select',
+        options: [
+          { label: '正向', value: 1 },
+          { label: '反向', value: -1 },
+        ],
+      },
     ],
     pointConfig: PIPE_POINT_CONFIG,
   },
@@ -740,7 +756,7 @@ const ALL_GROUPS = [
 
 /** 新建 HTML 元素节点（HTML 内容来自左侧面板的输入框） */
 export function createHtmlNode(source = HTML_DEFAULT_SOURCE, size = {}) {
-  return {
+  return withDataFields({
     id: genId(),
     name: 'HTML 面板',
     kind: 'html',
@@ -752,12 +768,12 @@ export function createHtmlNode(source = HTML_DEFAULT_SOURCE, size = {}) {
       html: source,
       ...size,
     },
-  }
+  })
 }
 
 /** 新建网页面板节点（网址来自左侧面板的输入框） */
 export function createWebNode(url = WEB_CATALOG[0].defaultProps.url, size = {}) {
-  return {
+  return withDataFields({
     id: genId(),
     name: '网页面板',
     kind: 'web',
@@ -769,7 +785,7 @@ export function createWebNode(url = WEB_CATALOG[0].defaultProps.url, size = {}) 
       url: String(url || '').trim(),
       ...size,
     },
-  }
+  })
 }
 
 export function findCatalog(kind, type) {  return ALL_GROUPS.find((c) => c.kind === kind && c.type === type)
@@ -787,6 +803,26 @@ export function genId() {
 
 /* ---------------- 工厂 ---------------- */
 
+/**
+ * 数据接入三件套之节点侧默认值：
+ *   hidden   —— 手动显隐基线（false = 显示；SceneTree 眼睛图标切换）
+ *   bindings —— 数据绑定列表（空 = 不接数据；每项结构见 core/binding.js 头注）
+ * 只写死在「新建节点」这一步；读老文档走 normalizeNodeData 兜底，不破坏存量场景。
+ */
+export function withDataFields(node) {
+  return { ...node, hidden: false, bindings: [] }
+}
+
+/** 读节点时补齐数据接入字段：老文档 / 外部 JSON 没有它们，一律按 显示 + 无绑定 兜底 */
+export function normalizeNodeData(node) {
+  if (!node || typeof node !== 'object') return node
+  return {
+    ...node,
+    hidden: node.hidden === true,
+    bindings: Array.isArray(node.bindings) ? node.bindings : [],
+  }
+}
+
 const IDENTITY_TRANSFORM = () => ({
   position: [0, 0, 0],
   rotation: [0, 0, 0], // 角度
@@ -798,7 +834,7 @@ const IDENTITY_TRANSFORM = () => ({
  * @param {{id:string, name:string}} asset 素材库记录
  */
 export function createModelNode(asset) {
-  return {
+  return withDataFields({
     id: genId(),
     name: asset.name.replace(/\.glb$/i, ''),
     kind: 'model',
@@ -809,12 +845,12 @@ export function createModelNode(asset) {
       assetId: asset.id,
       assetName: asset.name,
     },
-  }
+  })
 }
 
 /** 新建几何体 / 灯光 / 能量管道 / 特效节点 */
 export function createNode(kind, catalog) {
-  return {
+  return withDataFields({
     id: genId(),
     name: catalog.name,
     kind,
@@ -822,7 +858,7 @@ export function createNode(kind, catalog) {
     parentId: null,
     transform: IDENTITY_TRANSFORM(),
     props: { ...catalog.defaultProps },
-  }
+  })
 }
 
 /** 默认场景：科技网格地面 + 一盏半球环境光 */
@@ -842,6 +878,9 @@ export function createDefaultDocument() {
       },
       environment: { ...ENV_DOC_DEFAULT, props: { ...ENV_DOC_DEFAULT.props } },
     },
+    // 数据源定义（能量管道显隐 / 方向 / 颜色等的数据由此而来）。
+    // 空数组 = 纯静态场景；运行时由 core/dataHub.js 管理，求值见 core/binding.js。
+    sources: [],
     nodes: [light],
     cameras: [],
   }

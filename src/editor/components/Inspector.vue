@@ -20,11 +20,15 @@ import {
   movePathPoint,
   applyPathPreset,
   updateEnvironmentProp,
+  setNodeBinding,
+  testInject,
 } from '../store/editor'
 import { auth } from '../../store/auth'
 import { findCatalog, findGroundCatalog, ENV_FORM } from '../schema/sceneSchema'
 import PointListEditor from './PointListEditor.vue'
 import LoginDialog from './LoginDialog.vue'
+import BindingDialog from './BindingDialog.vue'
+import Icon from './Icon.vue'
 
 const isGround = computed(
   () => !editor.selectedId || editor.selectedId === GROUND_SELECTION,
@@ -98,6 +102,45 @@ function kindTag(kind) {
 function numInput(fn, evt, field) {
   const v = parseFloat(evt.target.value)
   if (!Number.isNaN(v)) fn(v)
+}
+
+/* ---- 数据绑定（行内小按钮 → BindingDialog） ---- */
+
+/** 这些类型的表单字段可以绑数据；长文本没意义，不给入口 */
+const BINDABLE_TYPES = ['color', 'number', 'switch', 'select']
+const bindable = (f) => BINDABLE_TYPES.includes(f.type)
+
+/** 表单字段 → 绑定 key：流向的手动字段叫 dir，绑定的 key 用 direction（引擎口径） */
+function bindKeyOf(f) {
+  return f.key === 'dir' ? 'direction' : f.key
+}
+
+/** null = 弹窗关着；否则带着目标字段和已有绑定 */
+const bindState = ref(null)
+
+function hasBinding(key) {
+  return !!node.value?.bindings?.some((b) => b && b.key === key)
+}
+
+function openBinding(key, label, type) {
+  bindState.value = {
+    key,
+    label,
+    type,
+    binding: node.value?.bindings?.find((b) => b && b.key === key) || null,
+  }
+}
+
+function saveBinding(binding) {
+  const id = node.value?.id
+  if (id && bindState.value) setNodeBinding(id, bindState.value.key, binding)
+  bindState.value = null
+}
+
+/** 弹窗「试一下」：绕过数据源直接灌值，验证引擎通路（联调） */
+function testBinding(payload) {
+  const id = node.value?.id
+  if (id) testInject(id, payload.key, payload.value)
 }
 </script>
 
@@ -314,7 +357,35 @@ function numInput(fn, evt, field) {
               :step="f.step"
               @input="numInput((v) => updateNodeProps(node.id, f.key, v), $event)"
             />
+            <!-- 绑定入口：跟在输入控件后面（输入链只渲染一个，按钮永远在行尾） -->
+            <button
+              v-if="bindable(f)"
+              class="bind-btn"
+              :class="{ bound: hasBinding(bindKeyOf(f)) }"
+              :title="hasBinding(bindKeyOf(f)) ? '已绑定数据，点击查看 / 修改' : '把这一项绑定到数据源'"
+              @click="openBinding(bindKeyOf(f), f.label, f.type)"
+            >
+              <Icon name="sliders" :size="12" />
+            </button>
           </div>
+        </section>
+
+        <!-- 数据接入：显隐 / 流向是运行时效果（显隐不在 form 里），单独给入口 -->
+        <section class="insp-section">
+          <h4>数据接入</h4>
+          <div class="form-row">
+            <label>显示</label>
+            <span class="readonly">{{ node.hidden ? '已隐藏（数据可临时覆盖）' : '显示中' }}</span>
+            <button
+              class="bind-btn"
+              :class="{ bound: hasBinding('visible') }"
+              title="绑定数据控制显隐（输出 0 / 1 或布尔）"
+              @click="openBinding('visible', '显示 / 隐藏', 'switch')"
+            >
+              <Icon name="sliders" :size="12" />
+            </button>
+          </div>
+          <p class="insp-hint">绑定只改显示效果（颜色 / 显隐 / 流向 / 光带参数），不动几何；未接数据的字段保持面板里的静态值。</p>
         </section>
 
         <button class="delete-btn" @click="removeNode(node.id)">删除节点（Delete）</button>
@@ -328,7 +399,20 @@ function numInput(fn, evt, field) {
     <div v-if="ui.inspectorOpen" class="insp-resize-handle" title="拖动调整宽度" @pointerdown="startResize"></div>
 
     <LoginDialog :open="loginOpen" @logged-in="loginOpen = false" @close="loginOpen = false" />
-  </aside>
+
+    <BindingDialog
+      v-if="bindState"
+      :key="bindState.key"
+      :open="true"
+      :node-id="node?.id || ''"
+      :field-key="bindState.key"
+      :field-label="bindState.label"
+      :field-type="bindState.type"
+      :binding="bindState.binding"
+      @close="bindState = null"
+      @save="saveBinding"
+      @test="testBinding"
+    />  </aside>
 </template>
 
 <style scoped>
@@ -514,6 +598,30 @@ function numInput(fn, evt, field) {
   font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--t-faint);
+}
+/* 行内绑定按钮：贴在输入框右侧；已绑定时用强调色描边 */
+.bind-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: var(--h-btn);
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-sm);
+  background: var(--c-raised);
+  color: var(--t-faint);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+.bind-btn:hover {
+  color: var(--t-strong);
+  border-color: var(--c-glass-strong);
+}
+.bind-btn.bound {
+  color: var(--accent);
+  border-color: var(--accent-line);
 }
 .form-row input[type='checkbox'] {
   width: 16px;

@@ -7,6 +7,8 @@
 import { reactive, watch } from 'vue'
 import Dexie from 'dexie'
 import { getEngine, createEngine } from '../core/engineHolder'
+import { dataHub, dataHubPush } from '../core/dataHub'
+import { evaluateNode } from '../core/binding'
 import {
   GROUND_CATALOG,
   GROUND_SELECTION,
@@ -20,6 +22,7 @@ import {
   findCatalog,
   findGroundCatalog,
   genId,
+  normalizeNodeData,
   ENV_DEFAULT_PROPS,
   ENV_DOC_DEFAULT,
 } from '../schema/sceneSchema'
@@ -189,7 +192,11 @@ export async function saveNow() {
 async function loadSaved() {
   const record = await db.scenes.get(SAVE_KEY)
   if (record?.doc) {
-    editor.doc = record.doc
+    // 老文档没有 hidden / bindings / sources，读档时补齐（schema 的 normalizeNodeData）
+    const doc = record.doc
+    doc.sources = Array.isArray(doc.sources) ? doc.sources : []
+    doc.nodes = (doc.nodes || []).map(normalizeNodeData)
+    editor.doc = doc
     editor.savedAt = record.savedAt ? new Date(record.savedAt) : null
     lastSavedAt = record.savedAt
     return true
@@ -235,6 +242,16 @@ export async function initEditor(canvas) {
     { deep: true },
   )
 
+  // 数据源定义变化（增 / 删 / 改 URL）→ 重启 dataHub；newScene / 读档换文档也会走到这儿
+  watch(
+    () => JSON.stringify(editor.doc.sources || []),
+    () => dataHub.start(editor.doc, applyBindings),
+  )
+
+  // 数据接入启动：按 doc.sources 起轮询；先求值一次，让已有绑定立刻在场景里生效
+  dataHub.start(editor.doc, applyBindings)
+  applyBindings()
+
   // 切后台/关页面前尽量落盘（visibilitychange 下异步事务有机会跑完）
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && saveTimer) saveNow()
@@ -242,6 +259,30 @@ export async function initEditor(canvas) {
   window.addEventListener('beforeunload', () => {
     if (saveTimer) saveNow()
   })
+
+  // 数据接入排障入口：控制台 __dataDebug.snapshot() 看源/绑定/数据，
+  // __dataDebug.testInject(nodeId, 'color', '#f00') 绕过数据源验证引擎通路。
+  // 不放 DEV 门里——排查问题时经常面对的就是构建产物，错过这门最耽误事。
+  const dataDebug = {
+    dataHub,
+    applyBindings,
+    snapshot() {
+      return {
+        sources: JSON.parse(JSON.stringify(editor.doc.sources || [])),
+        values: dataHub.values,
+        status: dataHub.status,
+        online: (editor.doc.sources || []).map((s) => [s.id, dataHub.online(s.id)]),
+        bindings: editor.doc.nodes.map((n) => [n.id, n.name, n.kind, n.bindings || []]),
+      }
+    },
+    testInject(nodeId, key, value) {
+      const engine = getEngine()
+      if (!engine) return '引擎未就绪'
+      engine.applyRuntimeValue(nodeId, key, value)
+      return { nodeId, key, value }
+    },
+  }
+  window.__dataDebug = dataDebug
 
   // 仅开发期暴露，方便冒烟测试/控制台操作
   if (import.meta.env.DEV) {
@@ -262,6 +303,11 @@ export async function initEditor(canvas) {
       getEngine,
       saveNow,
       PRIMITIVE_CATALOG,
+      applyBindings,
+      addDataSource,
+      dataHub,
+      dataHubPush,
+      dataDebug,
     }
   }
 }
@@ -332,6 +378,7 @@ export function removeNode(id) {
   if (idx < 0) return
   editor.doc.nodes.splice(idx, 1)
   getEngine()?.removeNode(id)
+  lastInjected.delete(id)
   if (editor.selectedId === id) editor.selectedId = null
 }
 
@@ -364,6 +411,14 @@ export function frameScene() {
 }
 
 /* ============ 属性编辑 ============ */
+
+/** 手动显隐（SceneTree 眼睛）：写文档（可保存）+ 同步引擎。数据注入的 visible 会临时覆盖它 */
+export function setNodeHidden(id, hidden) {
+  const node = findNode(id)
+  if (!node) return
+  node.hidden = !!hidden
+  getEngine()?.setNodeVisible(id, !hidden)
+}
 
 export function updateNodeProps(id, key, value) {
   const node = findNode(id)
@@ -483,6 +538,93 @@ export function applyPathPreset(id, key) {
   if (!preset) return
   node.props.points = preset.make()
   getEngine()?.updateProps(id, node.props)
+}
+
+/* ============ 数据接入（bindings） ============ */
+
+/**
+ * 联调用：绕过数据源直接往引擎灌一个值（绑定弹窗「试一下」/ __dataDebug.testInject）。
+ * 场景有反应 → 引擎通路是好的，问题在数据侧；没反应 → 节点 id 或引擎分派不对。
+ */
+export function testInject(nodeId, key, value) {
+  const engine = getEngine()
+  if (!engine) return null
+  engine.applyRuntimeValue(nodeId, key, value)
+  return { nodeId, key, value }
+}
+
+/** nodeId → 上一次注入的 { key: value }，同值短路，别把引擎刷成每帧重绘 */
+const lastInjected = new Map()
+
+/**
+ * 求值全部绑定并注入引擎。dataHub 每收到一条数据触发一次。
+ *
+ * 注意这条链路「三不」：不写 node.props、不碰几何字段、不触发 markDirty ——
+ * 数据态是运行时叠加，刷新页面 / 导出场景都以静态 props 为准。
+ */
+export function applyBindings() {
+  if (!editor.loaded) return
+  for (const node of editor.doc.nodes) {
+    if (!Array.isArray(node.bindings) || !node.bindings.length) continue
+    const patch = evaluateNode(node, dataHub.values)
+    if (!patch || !Object.keys(patch).length) continue
+    const last = lastInjected.get(node.id) || {}
+    for (const [key, value] of Object.entries(patch)) {
+      if (last[key] === value) continue
+      last[key] = value
+      try {
+        getEngine()?.applyRuntimeValue(node.id, key, value)
+      } catch (err) {
+        // 一条绑定出错不拖垮其余节点/字段；每个 key 只喊一次，别把控制台刷爆
+        const tag = `${node.id}:${key}`
+        if (!applyBindings._warned) applyBindings._warned = new Set()
+        if (!applyBindings._warned.has(tag)) {
+          applyBindings._warned.add(tag)
+          console.warn(`[数据绑定] 注入失败 ${tag}`, err)
+        }
+      }
+    }
+    lastInjected.set(node.id, last)
+  }
+}
+
+/** 新建数据源（Inspector 绑定弹窗里「＋新建数据源」）；增删由 watch 重启 dataHub */
+export function addDataSource(def) {
+  if (!Array.isArray(editor.doc.sources)) editor.doc.sources = []
+  editor.doc.sources.push(def)
+}
+
+/** 删除数据源；引用它的绑定保留但不再有数据（求值侧自动跳过） */
+export function removeDataSource(id) {
+  if (!Array.isArray(editor.doc.sources)) return
+  const idx = editor.doc.sources.findIndex((s) => s.id === id)
+  if (idx >= 0) editor.doc.sources.splice(idx, 1)
+}
+
+/**
+ * 设 / 改 / 解 某个字段的绑定（Inspector 绑定弹窗保存）。
+ * binding 传 null = 解绑。写完立即求值一次，不用等下一轮数据。
+ */
+export function setNodeBinding(id, key, binding) {
+  const node = findNode(id)
+  if (!node) return
+  if (!Array.isArray(node.bindings)) node.bindings = []
+  // 没有源的绑定是死绑定（求值侧第一行就会跳过），拒绝落盘
+  if (binding && !binding.source) {
+    console.warn('[数据绑定] 保存被拒绝：没有选择数据源', { id, key })
+    return
+  }
+  const idx = node.bindings.findIndex((b) => b && b.key === key)
+  if (!binding) {
+    if (idx >= 0) node.bindings.splice(idx, 1)
+  } else {
+    const next = { ...binding, key }
+    if (idx >= 0) node.bindings[idx] = next
+    else node.bindings.push(next)
+  }
+  // 立即生效 + 落盘（绑定配置是文档的一部分，要保存）
+  applyBindings()
+  markDirty()
 }
 
 /* ============ 场景级设置 ============ */
