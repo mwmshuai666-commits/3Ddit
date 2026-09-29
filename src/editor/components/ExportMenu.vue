@@ -161,35 +161,70 @@ onBeforeUnmount(() => {
 .export-menu {
   position: relative;
 }
+.tool-btn.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  height: 30px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--grad-accent);
+  border: 0;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  box-shadow: var(--glow-accent);
+  transition:
+    filter var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.tool-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+.tool-btn.primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+.tool-btn.primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+  box-shadow: none;
+}
 .export-pop {
   position: absolute;
-  top: 34px;
+  top: 38px;
   right: 0;
   z-index: var(--z-pop);
   width: 320px;
-  padding: var(--s-1);
+  padding: var(--s-2);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--s-1);
   background: var(--c-pop);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-md);
+  border: 1px solid var(--c-glass-strong);
+  border-radius: var(--r-card);
   box-shadow: var(--shadow-pop);
 }
 .export-item {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
-  padding: var(--s-2) 10px;
+  padding: var(--s-2) var(--s-3);
   text-align: left;
   background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
   cursor: pointer;
   color: var(--t-body);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 .export-item:hover {
-  background: var(--c-active);
+  background: rgb(255 255 255 / 7%);
+  border-color: var(--c-glass);
 }
 .export-item:disabled {
   opacity: 0.5;
@@ -203,7 +238,7 @@ onBeforeUnmount(() => {
   color: var(--t-strong);
 }
 .export-label .icon {
-  color: var(--t-faint);
+  color: var(--accent);
 }
 .export-desc {
   font-size: var(--fs-xs);
@@ -216,13 +251,14 @@ onBeforeUnmount(() => {
   right: 0;
   z-index: var(--z-toast);
   width: 320px;
-  padding: var(--s-2) 10px;
+  padding: var(--s-2) var(--s-3);
   font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--ok);
   background: var(--ok-soft);
   border: 1px solid var(--ok-line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(10px);
 }
 .export-toast.warn {
   color: var(--warn);

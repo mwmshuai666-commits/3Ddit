@@ -1,12 +1,14 @@
 /* ==========================================================================
-   全局基底：数字孪生场景编辑器（暗色 · 专业工具风）
+   全局基底：3D 工作台（深色 · 卡片化 · 黄色主操作）
    --------------------------------------------------------------------------
-   设计原则（对齐 VS Code / Blender，不对齐落地页）：
-     1. 颜色只表达「状态」，不表达「种类」—— 全站只有一个强调色，
-        节点类型靠图标形状区分，不再给每类一种糖果色；
-     2. 分区一律用 1px 发丝线，不加阴影（唯一例外是浮层，见 --shadow-pop）；
-     3. 全站零渐变；
-     4. 字阶 5 档 / 圆角 3 档 / 控件高 3 档 / 间距 5 档，不许多取值。
+   设计原则（对齐 Tripo / 主流 3D 生成工作台，不对齐 VS Code / Blender）：
+     1. 页面是「一束中心聚光」：app 底色靠径向渐变把视线引到视口中央，
+        所有面板是浮在聚光上的深色卡片，而不是贴边的扁平分区；
+     2. 卡片是唯一容器：圆角 --r-card、1px 半透明描边、一层很轻的投影，
+        卡片内部再用更弱的一级差区分层级，不再用发丝线把界面切碎；
+     3. 全站只有一个强调色（黄），且只给「主操作 / 选中 / 聚焦」用：
+        主按钮一律胶囊形 + 微光，次级操作是玻璃质感的小胶囊；
+     4. 字阶 5 档 / 圆角 5 档 / 控件高 3 档 / 间距 5 档，不许多取值。
 
    这里的自定义属性是全站唯一的取色来源。组件里不要再写 hex，
    新加颜色先问一遍「这是状态还是种类」—— 是种类就改成图标形状。
@@ -27,30 +29,34 @@
 @import './editor/styles/swatches.css';
 
 :root {
-  /* ---- 背景阶梯：视口最暗 → 浮层最亮 ---- */
-  --c-viewport: #111214; /* 3D 画布（比 app 更深，和工具界面拉开） */
-  --c-app: #08090a; /* 编辑器最底层 */
-  --c-panel: #1b1c1e; /* 左右侧栏 / 工具栏 / 状态栏 */
-  --c-raised: #252629; /* 输入框、按钮、行 hover */
-  --c-active: #303135; /* 选中 / 按下 */
-  --c-pop: #202124; /* 下拉、浮层 */
+  /* ---- 背景阶梯：视口最暗 → 浮层最亮（聚光由 .editor-shell 的渐变负责） ---- */
+  --c-viewport: #0c0d10; /* 3D 画布 */
+  --c-app: #0b0c0e; /* 工作台最底层 */
+  --c-panel: #17181c; /* 卡片：左右侧栏 / 顶栏 / 浮层 */
+  --c-panel-2: #1e2025; /* 卡片内的次级块（分区、行容器） */
+  --c-raised: #23252b; /* 输入框、按钮、行 hover */
+  --c-active: #2c2e35; /* 选中 / 按下 */
+  --c-pop: #1b1c21; /* 下拉、弹层 */
 
-  /* ---- 发丝线（分区唯一手段） ---- */
-  --c-line: #292a2d; /* chrome 边界：工具栏/侧栏/状态栏之间 */
-  --c-line-strong: #3a3b3f /* 控件描边、输入框边框 */;
+  /* ---- 描边：白色低透明度，比实色灰更贴「浮在聚光上的卡片」 ---- */
+  --c-line: #24262b; /* 分区 */
+  --c-line-strong: #34363d; /* 控件描边、输入框边框 */
+  --c-glass: rgb(255 255 255 / 7%); /* 卡片描边 */
+  --c-glass-strong: rgb(255 255 255 / 13%); /* 玻璃按钮描边 */
 
   /* ---- 文字：原来的 8 个近似灰收敛成 4 档 ---- */
-  --t-strong: #f5f5f4; /* 标题、强 */
-  --t-body: #d0d0ce; /* 正文 */
-  --t-muted: #96979a; /* 次级说明 */
-  --t-faint: #68696d; /* 占位、空态、最弱 */
+  --t-strong: #f4f5f7; /* 标题、强 */
+  --t-body: #cfd1d7; /* 正文 */
+  --t-muted: #8e9199; /* 次级说明 */
+  --t-faint: #62656d; /* 占位、空态、最弱 */
 
-  /* ---- 唯一强调色：只用于选中 / 聚焦 / 主按钮 ---- */
-  --accent: #ffd400;
-  --accent-hover: #ffe14d;
-  --accent-soft: rgb(255 212 0 / 13%);
-  --accent-line: rgb(255 212 0 / 42%);
-  --on-accent: #111;
+  /* ---- 唯一强调色（工作台黄）：只用于选中 / 聚焦 / 主按钮 ---- */
+  --accent: #ffd429;
+  --accent-hover: #ffe267;
+  --accent-press: #f0c21a;
+  --accent-soft: rgb(255 212 41 / 12%);
+  --accent-line: rgb(255 212 41 / 40%);
+  --on-accent: #1a1200;
 
   /* ---- 状态色：只用于状态栏 / toast / 校验提示 ---- */
   --ok: #4aa97b;
@@ -64,10 +70,12 @@
   --warn-line: rgb(207 159 58 / 35%);
   --danger-line: rgb(212 101 95 / 35%);
 
-  /* ---- 圆角：3 档 ---- */
-  --r-xs: 5px; /* kbd、小角标 */
-  --r-sm: 8px; /* 输入框、按钮 */
-  --r-md: 12px; /* 卡片容器、浮层 */
+  /* ---- 圆角：5 档（xs 小控件 → card 面板 → pill 胶囊） ---- */
+  --r-xs: 6px; /* kbd、小角标 */
+  --r-sm: 10px; /* 输入框、按钮、卡片内分块 */
+  --r-md: 14px; /* 分区卡片、浮层 */
+  --r-card: 20px; /* 侧栏 / 顶栏 / 视口这类大面板 */
+  --r-pill: 999px; /* 主操作、图标按钮 */
 
   /* ---- 间距：5 档 ---- */
   --s-1: 4px;
@@ -76,23 +84,25 @@
   --s-4: 16px;
   --s-5: 24px;
 
-  /* ---- 字阶：5 档 ---- */
+  /* ---- 字阶：6 档 ---- */
   --fs-2xs: 10px; /* 最辅助：类型标签、轴标、kbd */
   --fs-xs: 11px; /* 分组标题、状态栏、提示 */
   --fs-sm: 12px; /* 控件、列表项、正文 */
   --fs-md: 13px; /* 面板标题 */
   --fs-lg: 15px; /* 品牌名 */
+  --fs-xl: 18px; /* 空场景引导标题 */
 
   /* ---- 控件高度：3 档 ---- */
   --h-ctrl: 24px; /* 密集行内的输入框 */
-  --h-btn: 26px; /* 常规按钮 */
-  --h-btn-lg: 30px; /* 主按钮 */
-  --h-row: 32px; /* 列表行 */
+  --h-btn: 28px; /* 常规按钮 */
+  --h-btn-lg: 34px; /* 主按钮 */
+  --h-row: 34px; /* 列表行 */
 
   /* ---- 结构尺寸 ---- */
-  --h-toolbar: 54px;
-  --h-status: 26px;
-  --w-panel: 292px;
+  --h-toolbar: 56px; /* 顶栏（一整颗胶囊） */
+  --h-status: 26px; /* 底部状态浮条 */
+  --w-panel: 300px; /* 左右侧栏 */
+  --w-rail: 58px; /* 左右图标栏 */
 
   /* ---- 层级 ---- */
   --z-pop: 40; /* 下拉浮层 */
@@ -107,8 +117,17 @@
   --font-sans: system-ui, 'Segoe UI', 'Microsoft YaHei', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
 
-  /* ---- 全站唯一一处阴影：浮层需要和页面分层 ---- */
-  --shadow-pop: 0 12px 32px rgb(0 0 0 / 45%);
+  /* ---- 阴影：卡片要"浮"在聚光上，主按钮靠微光而不是描边抢眼 ---- */
+  --shadow-card: 0 20px 44px rgb(0 0 0 / 42%);
+  --shadow-pop: 0 18px 46px rgb(0 0 0 / 58%);
+  --glow-accent: 0 8px 22px rgb(255 212 41 / 26%);
+
+  /* ---- 渐变：玻璃质感 / 主按钮 / 品牌标 ---- */
+  --grad-glass: linear-gradient(150deg, rgb(255 255 255 / 9%), rgb(255 255 255 / 3%));
+  --grad-accent: linear-gradient(135deg, #ffe267 0%, #ffc800 100%);
+
+  /* ---- 遗留别名：utils/ProgressBar.js 还在引用这个老名字 ---- */
+  --color-text-two: var(--t-strong);
 }
 
 * {
@@ -184,6 +203,22 @@ textarea:disabled {
   color: var(--t-strong);
 }
 
+/**
+ * 左右侧栏共用同一副卡片骨架。
+ * 放全局而不是写两遍：两个面板的 chrome 必须完全一致（同色边框、同圆角、同投影），
+ * 分开放 scoped 里，改一处忘一处就会看起来一边厚一边薄。
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-panel);
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
 /* 细滚动条 */
 ::-webkit-scrollbar {
   width: 8px;
@@ -226,5 +261,17 @@ input[type='number'] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Compact 3D studio responsiveness. */
-@media (max-width: 900px) { :root { --w-panel: 230px; } .status-bar .hint { display: none; } }
+/* 窄屏：先收图标栏，再收面板 —— 3D 工作台在 1100px 以下就该考虑折叠 */
+@media (max-width: 1100px) {
+  :root {
+    --w-panel: 272px;
+  }
+}
+@media (max-width: 900px) {
+  :root {
+    --w-panel: 230px;
+  }
+  .status-bar .hint {
+    display: none;
+  }
+}

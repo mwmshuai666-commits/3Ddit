@@ -1,12 +1,15 @@
 <script setup>
 /**
- * 左侧「搭建」面板：七个栏目做成可折叠的手风琴。
+ * 左侧「搭建」面板：八个栏目做成可折叠的手风琴。
  *
- * 折叠状态存 localStorage（键 SECTION_KEY），刷新 / 重开浏览器还在。
+ * 展开状态、当前栏目都在 store 的 ui 里（不走 localStorage 的手写读取了）：
+ * 左右图标栏点过来要「展开 + 滚到那一栏」，上传模型要弹文件框，都得让面板外部
+ * 驱动内部的展开状态和文件输入。
+ *
  * 五六两栏（HTML 元素导入、环境天空盒）是后来加的：前者是用户手写 HTML 片段，
  * 后者上传 hdr 当天空盒 + 全局环境光照。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import {
   GROUND_CATALOG,
   PRIMITIVE_CATALOG,
@@ -17,6 +20,8 @@ import {
 } from '../schema/sceneSchema'
 import {
   editor,
+  ui,
+  toggleLibSection,
   addFromCatalog,
   setGroundType,
   uploadAsset,
@@ -33,38 +38,8 @@ import {
 import { iconOf } from './icons'
 import Icon from './Icon.vue'
 
-const SECTION_KEY = 'twinEditor.libSections'
-const SECTION_KEYS = ['ground', 'primitive', 'light', 'effect', 'model', 'html', 'web', 'env']
-
-function readOpenState() {
-  const fallback = {
-    ground: true, primitive: false, light: false, effect: false, model: false,
-    html: false, web: false, env: false,
-  }
-  try {
-    const saved = JSON.parse(localStorage.getItem(SECTION_KEY) || 'null')
-    if (!saved || typeof saved !== 'object') return fallback
-    for (const key of SECTION_KEYS) {
-      fallback[key] = saved[key] === undefined ? fallback[key] : !!saved[key]
-    }
-  } catch {
-    /* 存了个坏值就用默认的 */
-  }
-  return fallback
-}
-
-const open = ref(readOpenState())
-
 function toggle(key) {
-  open.value[key] = !open.value[key]
-  localStorage.setItem(SECTION_KEY, JSON.stringify(open.value))
-}
-
-function toggleAll() {
-  // 有开着的就全收，全关上就全开
-  const anyOpen = SECTION_KEYS.some((k) => open.value[k])
-  for (const key of SECTION_KEYS) open.value[key] = !anyOpen
-  localStorage.setItem(SECTION_KEY, JSON.stringify(open.value))
+  toggleLibSection(key)
 }
 
 /* ---- 模型自定义 ---- */
@@ -85,6 +60,24 @@ async function onFilePicked(evt) {
 }
 
 const models = computed(() => modelAssets())
+
+/* ---- 侧栏 / 视口浮动按钮请求：上传模型 ---- */
+watch(
+  () => ui.uploadSeq,
+  () => fileInput.value?.click(),
+)
+
+/* ---- 侧栏图标请求：展开并滚到对应栏目 ---- */
+watch(
+  () => ui.focus.seq,
+  () => {
+    const key = ui.focus.section
+    if (!key) return
+    nextTick(() => {
+      document.getElementById(`lib-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  },
+)
 
 /* ---- HTML 元素导入 ---- */
 
@@ -170,19 +163,14 @@ function fmtSize(bytes) {
 
 <template>
   <div class="library">
-    <div class="lib-head">
-      <span>栏目</span>
-      <button class="toggle-all" @click="toggleAll">全部展开 / 收起</button>
-    </div>
-
     <!-- 场景底板 -->
-    <section class="lib-section" :class="{ closed: !open.ground }">
+    <section id="lib-ground" class="lib-section" :class="{ closed: !ui.libOpen.ground }">
       <h3 @click="toggle('ground')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.ground }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.ground }" />
         <Icon name="layers" :size="13" />
         场景底板 <em>· 整场景唯一</em>
       </h3>
-      <div v-show="open.ground" class="lib-body">
+      <div v-show="ui.libOpen.ground" class="lib-body">
         <div class="ground-list">
           <button
             v-for="g in GROUND_CATALOG"
@@ -202,13 +190,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 基础几何体 -->
-    <section class="lib-section" :class="{ closed: !open.primitive }">
+    <section id="lib-primitive" class="lib-section" :class="{ closed: !ui.libOpen.primitive }">
       <h3 @click="toggle('primitive')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.primitive }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.primitive }" />
         <Icon name="box" :size="13" />
         基础几何体 <em>· 点击添加到场景</em>
       </h3>
-      <div v-show="open.primitive" class="lib-body">
+      <div v-show="ui.libOpen.primitive" class="lib-body">
         <div class="item-grid">
           <button
             v-for="p in PRIMITIVE_CATALOG"
@@ -224,13 +212,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 灯光 -->
-    <section class="lib-section" :class="{ closed: !open.light }">
+    <section id="lib-light" class="lib-section" :class="{ closed: !ui.libOpen.light }">
       <h3 @click="toggle('light')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.light }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.light }" />
         <Icon name="sun" :size="13" />
         灯光 <em>· 旋转控制照射方向</em>
       </h3>
-      <div v-show="open.light" class="lib-body">
+      <div v-show="ui.libOpen.light" class="lib-body">
         <div class="item-grid">
           <button
             v-for="l in LIGHT_CATALOG"
@@ -246,13 +234,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 特效组件 -->
-    <section class="lib-section" :class="{ closed: !open.effect }">
+    <section id="lib-effect" class="lib-section" :class="{ closed: !ui.libOpen.effect }">
       <h3 @click="toggle('effect')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.effect }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.effect }" />
         <Icon name="sparkles" :size="13" />
         特效组件 <em>· 管道 / 飞线 / 波纹墙 / 天气</em>
       </h3>
-      <div v-show="open.effect" class="lib-body">
+      <div v-show="ui.libOpen.effect" class="lib-body">
         <div class="item-grid">
           <button
             v-for="d in EFFECT_SECTION"
@@ -269,13 +257,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 模型自定义 -->
-    <section class="lib-section" :class="{ closed: !open.model }">
+    <section id="lib-model" class="lib-section" :class="{ closed: !ui.libOpen.model }">
       <h3 @click="toggle('model')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.model }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.model }" />
         <Icon name="cube" :size="13" />
         模型自定义 <em>· glb 素材，点击复用</em>
       </h3>
-      <div v-show="open.model" class="lib-body">
+      <div v-show="ui.libOpen.model" class="lib-body">
         <input
           ref="fileInput"
           type="file"
@@ -284,7 +272,7 @@ function fmtSize(bytes) {
           @change="onFilePicked"
         />
         <button class="upload-btn" :disabled="uploading" @click="fileInput.click()">
-          <Icon name="upload" :size="13" />
+          <Icon name="upload" :size="14" />
           {{ uploading ? '加载中…' : '上传 GLB（自动放入场景）' }}
         </button>
 
@@ -311,13 +299,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- HTML 元素导入 -->
-    <section class="lib-section" :class="{ closed: !open.html }">
+    <section id="lib-html" class="lib-section" :class="{ closed: !ui.libOpen.html }">
       <h3 @click="toggle('html')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.html }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.html }" />
         <Icon name="code" :size="13" />
         HTML 元素导入 <em>· 手写内容变成场景面板</em>
       </h3>
-      <div v-show="open.html" class="lib-body">
+      <div v-show="ui.libOpen.html" class="lib-body">
         <textarea
           v-model="htmlSource"
           class="html-input"
@@ -352,13 +340,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 网页导入（DOM iframe 浮层） -->
-    <section class="lib-section" :class="{ closed: !open.web }">
+    <section id="lib-web" class="lib-section" :class="{ closed: !ui.libOpen.web }">
       <h3 @click="toggle('web')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.web }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.web }" />
         <Icon name="globe" :size="13" />
         网页导入 <em>· 场景里放一块真网页</em>
       </h3>
-      <div v-show="open.web" class="lib-body">
+      <div v-show="ui.libOpen.web" class="lib-body">
         <input
           v-model.trim="webUrl"
           class="html-input"
@@ -399,13 +387,13 @@ function fmtSize(bytes) {
     </section>
 
     <!-- 环境天空盒 -->
-    <section class="lib-section" :class="{ closed: !open.env }">
+    <section id="lib-env" class="lib-section" :class="{ closed: !ui.libOpen.env }">
       <h3 @click="toggle('env')">
-        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !open.env }" />
+        <Icon name="chevron" :size="12" class="caret" :class="{ shut: !ui.libOpen.env }" />
         <Icon name="globe" :size="13" />
         环境天空盒 <em>· 上传 hdr 照亮整个场景</em>
       </h3>
-      <div v-show="open.env" class="lib-body">
+      <div v-show="ui.libOpen.env" class="lib-body">
         <input
           ref="envFileInput"
           type="file"
@@ -478,37 +466,10 @@ function fmtSize(bytes) {
   padding: var(--s-2);
   overflow-y: auto;
 }
-.lib-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--h-ctrl);
-  margin-bottom: var(--s-2);
-}
-.lib-head > span {
-  font-size: var(--fs-2xs);
-  color: var(--t-faint);
-  letter-spacing: 0.06em;
-}
-.toggle-all {
-  border: none;
-  background: transparent;
-  color: var(--t-muted);
-  font-size: var(--fs-2xs);
-  cursor: pointer;
-  padding: 0 var(--s-1);
-  height: var(--h-ctrl);
-  border-radius: var(--r-sm);
-}
-.toggle-all:hover {
-  color: var(--t-strong);
-  background: var(--c-active);
-}
+/* 栏目就是这个面板本身卡出来的分组：不加描边，靠间距和标题分层 */
 .lib-section {
-  margin-bottom: var(--s-2);
-  background: var(--c-panel);
-  border: 1px solid var(--c-line);
-  border-radius: var(--r-md);
+  margin-bottom: var(--s-3);
+  scroll-margin-block-start: var(--s-2);
 }
 .lib-section h3 {
   display: flex;
@@ -522,9 +483,11 @@ function fmtSize(bytes) {
   color: var(--t-body);
   cursor: pointer;
   user-select: none;
+  border-radius: var(--r-sm);
 }
 .lib-section h3:hover {
   color: var(--t-strong);
+  background: rgb(255 255 255 / 5%);
 }
 .lib-section h3 em {
   margin-left: auto;
@@ -545,11 +508,8 @@ function fmtSize(bytes) {
 .caret.shut {
   transform: rotate(-90deg);
 }
-.lib-section.closed {
-  background: var(--c-app);
-}
 .lib-body {
-  padding: 0 var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-1) 0;
 }
 .ground-list {
   display: flex;
@@ -561,11 +521,14 @@ function fmtSize(bytes) {
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-2);
-  background: var(--c-raised);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-sm);
+  background: var(--grad-glass);
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-md);
   cursor: pointer;
   text-align: left;
+  transition:
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
 }
 .ground-item:hover {
   border-color: var(--accent-line);
@@ -603,33 +566,46 @@ function fmtSize(bytes) {
 }
 .lib-item {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--s-2);
-  height: var(--h-row);
-  padding: 0 var(--s-2);
-  font-size: var(--fs-sm);
+  justify-content: center;
+  gap: var(--s-1);
+  min-height: 52px;
+  padding: var(--s-2);
+  font-size: var(--fs-xs);
   font-family: inherit;
   color: var(--t-body);
-  background: var(--c-raised);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-sm);
+  background: var(--grad-glass);
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-md);
   cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 .lib-item:hover {
+  transform: translateY(-1px);
   border-color: var(--accent-line);
   color: var(--t-strong);
+}
+.lib-item:active {
+  transform: translateY(0);
 }
 /* 图标容器只负责对齐，颜色一律 --t-muted：种类信息形状已经带够了 */
 .lib-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   color: var(--t-muted);
   background: var(--c-active);
   border-radius: var(--r-sm);
+}
+.lib-item:hover .lib-icon {
+  color: var(--accent-hover);
 }
 .upload-btn {
   display: inline-flex;
@@ -646,6 +622,9 @@ function fmtSize(bytes) {
   border: 1px dashed var(--accent-line);
   border-radius: var(--r-sm);
   cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 .upload-btn:hover:not(:disabled) {
   background: var(--c-active);
@@ -660,11 +639,14 @@ function fmtSize(bytes) {
   margin-bottom: var(--s-1);
   color: var(--on-accent);
   font-weight: 600;
-  background: var(--accent);
+  background: var(--grad-accent);
   border-color: transparent;
+  border-radius: var(--r-pill);
+  box-shadow: var(--glow-accent);
 }
 .upload-btn.solid:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--grad-accent);
+  filter: brightness(1.06);
   border-color: transparent;
 }
 .upload-btn.ghost {
@@ -689,9 +671,9 @@ function fmtSize(bytes) {
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-2);
-  background: var(--c-raised);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-sm);
+  background: var(--grad-glass);
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-md);
   cursor: pointer;
   text-align: left;
 }

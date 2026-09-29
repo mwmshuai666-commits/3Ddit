@@ -269,6 +269,55 @@ export default class EditorEngine {
     this.camera.beta = INIT_BETA
     this.camera.radius = Math.max(20, size * INIT_RADIUS_RATIO)
     this.camera.target.set(0, Math.max(1, size * INIT_TARGET_Y_RATIO), 0)
+    // 记住这份「首页视角」，frameAll 在空场景时用它归位
+    this._homeView = {
+      alpha: this.camera.alpha,
+      beta: this.camera.beta,
+      radius: this.camera.radius,
+      target: this.camera.target.clone(),
+    }
+  }
+
+  /**
+   * 镜头归位：把整个场景（所有节点的总包围盒）收进视野。
+   * 一个节点都没有时回到 loadDocument 那套基于地面的默认取景。
+   */
+  frameAll() {
+    let min = null
+    let max = null
+    const grow = (mesh) => {
+      const b = mesh.getHierarchyBoundingVectors?.(true)
+      if (!b) return
+      if (!min) {
+        min = b.min.clone()
+        max = b.max.clone()
+        return
+      }
+      min = Vector3.Minimize(min, b.min)
+      max = Vector3.Maximize(max, b.max)
+    }
+    for (const entry of this.entries.values()) {
+      if (entry.meshes?.length) {
+        for (const mesh of entry.meshes) grow(mesh)
+      } else if (entry.object?.getHierarchyBoundingVectors) {
+        grow(entry.object)
+      } else if (entry.visual?.tube?.getHierarchyBoundingVectors) {
+        grow(entry.visual.tube)
+      }
+    }
+
+    if (min && max) {
+      const center = Vector3.Center(min, max)
+      const span = Vector3.Distance(min, max)
+      this.camera.target.set(center.x, Math.max(center.y, 1), center.z)
+      this.camera.radius = Math.max(4, Math.min(span * 1.5, this.camera.upperRadiusLimit))
+      return
+    }
+    if (!this._homeView) return
+    this.camera.alpha = this._homeView.alpha
+    this.camera.beta = this._homeView.beta
+    this.camera.radius = this._homeView.radius
+    this.camera.target.copyFrom(this._homeView.target)
   }
 
   /* ============ 地面 ============ */

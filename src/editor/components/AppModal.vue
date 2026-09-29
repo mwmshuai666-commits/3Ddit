@@ -89,20 +89,20 @@ function onMaskClick(e) {
   display: flex;
   flex-direction: column;
   max-width: 100%;
-  background: var(--c-pop);
-  border: 1px solid var(--c-line-strong);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-pop);
+  background: var(--c-panel);
+  border: 1px solid var(--c-glass-strong);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
 }
 
 .modal-head {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  height: var(--h-btn);
+  height: var(--h-btn-lg);
   padding: 0 var(--s-2) 0 var(--s-4);
   color: var(--t-strong);
-  border-bottom: 1px solid var(--c-line);
+  border-bottom: 1px solid var(--c-glass);
 }
 .modal-head h2 {
   flex: 1;
@@ -118,17 +118,20 @@ function onMaskClick(e) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--h-ctrl);
-  height: var(--h-ctrl);
+  width: 26px;
+  height: 26px;
   color: var(--t-muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
+  background: var(--grad-glass);
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-pill);
   cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 .modal-x:hover {
   color: var(--t-strong);
-  background: var(--c-active);
+  border-color: var(--c-glass-strong);
 }
 
 .modal-body {

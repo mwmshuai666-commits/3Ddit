@@ -118,6 +118,26 @@ async function submit() {
 .field span {
   font-size: var(--fs-xs);
   color: var(--t-muted);
+  padding-left: var(--s-2);
+}
+.field input {
+  height: var(--h-btn-lg);
+  padding: 0 var(--s-3);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--t-strong);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-pill);
+  box-sizing: border-box;
+}
+.field input::placeholder {
+  color: var(--t-faint);
+}
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .err {
@@ -153,10 +173,21 @@ async function submit() {
 }
 .btn.primary {
   color: var(--on-accent);
-  background: var(--accent);
+  background: var(--grad-accent);
   border-color: transparent;
+  border-radius: var(--r-pill);
+  height: 34px;
+  font-weight: 600;
+  box-shadow: var(--glow-accent);
+  transition:
+    filter var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 .btn.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+.btn.primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
 }
 </style>

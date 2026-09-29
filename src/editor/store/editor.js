@@ -50,13 +50,123 @@ export const editor = reactive({
   loaded: false,
   saving: false,
   savedAt: null,
+  /** 有没有还没落盘的改动（自动保存是延后的，期间顶栏铃铛亮个点） */
+  dirty: false,
 })
 
 let saveTimer = null
 let lastSavedAt = null
 
+/* ============ 界面状态（面板开合 / 栏目展开 / 侧栏导航） ============ */
+
+const LIB_SECTIONS = ['ground', 'primitive', 'light', 'effect', 'model', 'html', 'web', 'env']
+const LIB_KEY = 'twinEditor.libSections'
+const LEFT_KEY = 'twinEditor.leftPanelCollapsed'
+const INSP_KEY = 'twinEditor.inspectorCollapsed'
+
+function readBool(key, dflt) {
+  try {
+    const v = localStorage.getItem(key)
+    return v === null ? dflt : v === '1'
+  } catch {
+    return dflt // 隐私模式下 localStorage 会抛错，退回默认值
+  }
+}
+function writeBool(key, v) {
+  try {
+    localStorage.setItem(key, v ? '1' : '0')
+  } catch {
+    /* 同上，存不进去不影响这次会话 */
+  }
+}
+
+function readLibOpen() {
+  const fallback = {
+    ground: true, primitive: false, light: false, effect: false, model: false,
+    html: false, web: false, env: false,
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(LIB_KEY) || 'null')
+    if (!saved || typeof saved !== 'object') return fallback
+    for (const key of LIB_SECTIONS) {
+      fallback[key] = saved[key] === undefined ? fallback[key] : !!saved[key]
+    }
+  } catch {
+    /* 存了个坏值就用默认的 */
+  }
+  return fallback
+}
+
+/**
+ * 「哪些面板开着、展开到哪」。selectedId / gizmoMode 这类「在编辑什么」在 editor 里，
+ * 这里只放 chrome 状态 —— 左右侧栏图标、顶栏导航、面板标题栏都要驱动同一份，
+ * 所以它不能留在某个组件内部。
+ */
+export const ui = reactive({
+  leftOpen: !readBool(LEFT_KEY, false),
+  leftTab: 'library', // library | tree
+  inspectorOpen: !readBool(INSP_KEY, false),
+  libOpen: readLibOpen(),
+  /** 最近一次「跳到某个栏目」的请求；序号自增，重复点同一项也要重新滚过去 */
+  focus: { section: '', seq: 0 },
+  /** 请求打开模型上传框（侧栏图标 / 视口浮动按钮） */
+  uploadSeq: 0,
+})
+
+function persistLib() {
+  try {
+    localStorage.setItem(LIB_KEY, JSON.stringify(ui.libOpen))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+export function toggleLibSection(key) {
+  ui.libOpen[key] = !ui.libOpen[key]
+  persistLib()
+}
+
+/** 有开着的就全收，全关上就全开 */
+export function toggleAllLibSections() {
+  const anyOpen = LIB_SECTIONS.some((k) => ui.libOpen[k])
+  for (const key of LIB_SECTIONS) ui.libOpen[key] = !anyOpen
+  persistLib()
+}
+
+/** 侧栏图标：展开左面板、切到搭建页、展开该栏目并滚到它 */
+export function focusLibSection(section) {
+  ui.leftOpen = true
+  ui.leftTab = 'library'
+  ui.libOpen[section] = true
+  persistLib()
+  ui.focus = { section, seq: ui.focus.seq + 1 }
+}
+
+/** 顶栏导航：只切页，不动栏目展开状态 */
+export function showPanelTab(tab) {
+  ui.leftOpen = true
+  ui.leftTab = tab
+}
+
+export function toggleLeftPanel() {
+  ui.leftOpen = !ui.leftOpen
+  writeBool(LEFT_KEY, !ui.leftOpen)
+}
+
+export function toggleInspector() {
+  ui.inspectorOpen = !ui.inspectorOpen
+  writeBool(INSP_KEY, !ui.inspectorOpen)
+}
+
+/** 打开模型上传那一栏并弹出文件框（侧栏图标 / 视口浮动按钮） */
+export function requestModelUpload() {
+  focusLibSection('model')
+  ui.uploadSeq += 1
+}
+
 function markDirty() {
   if (!editor.loaded) return
+  editor.dirty = true
   clearTimeout(saveTimer)
   saveTimer = setTimeout(saveNow, 800)
 }
@@ -70,6 +180,7 @@ export async function saveNow() {
     await db.scenes.put(record)
     lastSavedAt = record.savedAt
     editor.savedAt = new Date(record.savedAt)
+    editor.dirty = false
   } finally {
     editor.saving = false
   }
@@ -240,6 +351,16 @@ export function frameSelected() {
   if (editor.selectedId && editor.selectedId !== GROUND_SELECTION) {
     getEngine()?.frameSelected(editor.selectedId)
   }
+}
+
+/**
+ * 顶栏「首页」：取消选中，把镜头拉回整个场景。
+ * 一个节点都没有时归位到地面的默认取景（见 EditorEngine.frameAll）。
+ */
+export function frameScene() {
+  if (!editor.loaded) return
+  selectNode(null)
+  getEngine()?.frameAll()
 }
 
 /* ============ 属性编辑 ============ */

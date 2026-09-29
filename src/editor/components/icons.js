@@ -33,6 +33,19 @@ export const ICONS = {
   caretRight: '<path d="m9.5 6 6 6-6 6"/>',
   caretLeft: '<path d="m15 6-6 6 6 6"/>',
   panelLeft: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M9.5 4.5v15"/>',
+  panelRight: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M14.5 4.5v15"/>',
+
+  /* ---- 顶栏 / 侧栏 ---- */
+  home: '<path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1v-8.5Z"/>',
+  grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>',
+  stack:
+    '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/><path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5"/>',
+  sliders: '<path d="M4 7.5h16M4 16.5h16"/><circle cx="9" cy="7.5" r="2.2"/><circle cx="15" cy="16.5" r="2.2"/>',
+  camera:
+    '<path d="M4 8.5h3.2L8.7 6.5h6.6l1.5 2H20a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.2" r="3.2"/>',
+  tag: '<path d="M12.6 3.5H20v7.4l-8.6 8.6a1.5 1.5 0 0 1-2.1 0l-5.3-5.3a1.5 1.5 0 0 1 0-2.1L12.6 3.5Z"/><circle cx="16.4" cy="7.6" r="1.2"/>',
+  bell: '<path d="M18 8.6a6 6 0 1 0-12 0c0 5-2 6.4-2 6.4h16s-2-1.4-2-6.4Z"/><path d="M10.2 19a2 2 0 0 0 3.6 0"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.4a2.6 2.6 0 1 1 3.9 2.5c-.85.5-1.4 1-1.4 2"/><path d="M12 17.2h.01"/>',
 
   /* ---- 文件 / 资源操作 ---- */
   upload:

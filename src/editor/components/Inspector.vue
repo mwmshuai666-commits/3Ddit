@@ -2,6 +2,8 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import {
   editor,
+  ui,
+  toggleInspector,
   findNode,
   GROUND_SELECTION,
   GROUND_CATALOG,
@@ -19,8 +21,10 @@ import {
   applyPathPreset,
   updateEnvironmentProp,
 } from '../store/editor'
+import { auth } from '../../store/auth'
 import { findCatalog, findGroundCatalog, ENV_FORM } from '../schema/sceneSchema'
 import PointListEditor from './PointListEditor.vue'
+import LoginDialog from './LoginDialog.vue'
 
 const isGround = computed(
   () => !editor.selectedId || editor.selectedId === GROUND_SELECTION,
@@ -54,9 +58,9 @@ const transformParts = [
 ]
 const axes = ['X', 'Y', 'Z']
 const panelWidth = ref(292)
-const collapsed = ref(false)
 const resizing = ref(false)
 
+/* ---- 拖动调宽 ---- */
 function resizePanel(event) {
   if (!resizing.value) return
   panelWidth.value = Math.max(230, Math.min(460, window.innerWidth - event.clientX - 12))
@@ -67,13 +71,16 @@ function stopResize() {
   document.removeEventListener('pointerup', stopResize)
 }
 function startResize(event) {
-  if (collapsed.value) return
+  if (!ui.inspectorOpen) return
   resizing.value = true
   document.addEventListener('pointermove', resizePanel)
   document.addEventListener('pointerup', stopResize)
   event.preventDefault()
 }
 onBeforeUnmount(stopResize)
+
+/* ---- 登录弹窗 ---- */
+const loginOpen = ref(false)
 
 const KIND_TAGS = {
   light: '灯光',
@@ -95,311 +102,387 @@ function numInput(fn, evt, field) {
 </script>
 
 <template>
-  <aside class="inspector" :class="{ collapsed, resizing }" :style="{ width: `${collapsed ? 48 : panelWidth}px` }">
-    <div class="insp-shell-head">
-      <button class="glass-icon-btn insp-toggle" :aria-label="collapsed ? '展开属性栏' : '收起属性栏'" :aria-expanded="!collapsed" :title="collapsed ? '展开属性栏' : '收起属性栏'" @click="collapsed = !collapsed">
-        <span>{{ collapsed ? '‹' : '›' }}</span>
+  <aside
+    class="panel inspector"
+    :class="{ collapsed: !ui.inspectorOpen, resizing }"
+    :style="{ width: `${ui.inspectorOpen ? panelWidth : 52}px` }"
+  >
+    <div class="panel-head">
+      <button
+        class="head-btn"
+        :aria-label="ui.inspectorOpen ? '收起属性栏' : '展开属性栏'"
+        :aria-expanded="ui.inspectorOpen"
+        :title="ui.inspectorOpen ? '收起属性栏' : '展开属性栏'"
+        @click="toggleInspector()"
+      >
+        <span class="caret" :class="{ shut: !ui.inspectorOpen }">›</span>
       </button>
-      <span v-if="!collapsed">属性面板</span>
+      <span v-if="ui.inspectorOpen" class="panel-title">属性</span>
+      <span v-if="ui.inspectorOpen && node" class="head-tag">{{ kindTag(node.kind) }}</span>
+      <span v-else-if="ui.inspectorOpen" class="head-tag">场景</span>
     </div>
-    <div v-if="!collapsed" class="insp-content">
-    <!-- ===== 场景设置（未选中或选中地面） ===== -->
-    <template v-if="isGround">
-      <div class="insp-title">场景设置</div>
 
-      <section class="insp-section">
-        <h4>底板类型</h4>
-        <div class="ground-types">
-          <button
-            v-for="g in GROUND_CATALOG"
-            :key="g.type"
-            class="ground-type"
-            :class="{ active: ground.type === g.type }"
-            @click="setGroundType(g.type)"
-          >
-            <span class="gt-swatch" :class="`sw-${g.type}`"></span>
-            {{ g.name }}
-          </button>
+    <div v-if="ui.inspectorOpen" class="insp-body">
+      <!-- 导出门禁的常驻提示：跟 Tripo 那条「升级横幅」一个位置，但说的是真事 -->
+      <div v-if="auth.status !== 'authed'" class="insp-banner">
+        <div class="banner-text">
+          登录后可导出单文件 HTML / 完整包 ZIP
         </div>
-      </section>
+        <button class="banner-btn" @click="loginOpen = true">登录</button>
+      </div>
 
-      <section class="insp-section">
-        <h4>底板参数</h4>
-        <div v-for="f in groundForm" :key="f.key" class="form-row">
-          <label>{{ f.label }}</label>
-          <input
-            v-if="f.type === 'color'"
-            type="color"
-            :value="ground.props[f.key]"
-            @input="updateGroundProp(f.key, $event.target.value)"
-          />
-          <input
-            v-else
-            type="number"
-            :value="ground.props[f.key]"
-            :min="f.min"
-            :step="f.step"
-            @input="numInput((v) => updateGroundProp(f.key, v), $event)"
-          />
-        </div>
-      </section>
-
-      <section class="insp-section">
-        <h4>环境</h4>
-        <div class="form-row">
-          <label>背景色</label>
-          <input
-            type="color"
-            :value="editor.doc.scene.background"
-            @input="updateBackground($event.target.value)"
-          />
-        </div>
-      </section>
-
-      <section class="insp-section">
-        <h4>环境天空盒</h4>
-        <template v-if="envActive">
-          <div class="form-row">
-            <label>当前环境</label>
-            <span class="readonly env-name" :title="envDoc.assetName">{{ envDoc.assetName }}</span>
+      <!-- ===== 场景设置（未选中或选中地面） ===== -->
+      <template v-if="isGround">
+        <section id="insp-scene" class="insp-section">
+          <h4>底板类型</h4>
+          <div class="ground-types">
+            <button
+              v-for="g in GROUND_CATALOG"
+              :key="g.type"
+              class="ground-type"
+              :class="{ active: ground.type === g.type }"
+              @click="setGroundType(g.type)"
+            >
+              <span class="gt-swatch" :class="`sw-${g.type}`"></span>
+              {{ g.name }}
+            </button>
           </div>
-          <div v-for="f in ENV_FORM" :key="f.key" class="form-row">
+        </section>
+
+        <section class="insp-section">
+          <h4>底板参数</h4>
+          <div v-for="f in groundForm" :key="f.key" class="form-row">
             <label>{{ f.label }}</label>
             <input
-              v-if="f.type === 'switch'"
-              type="checkbox"
-              :checked="envDoc.props?.[f.key] !== false"
-              @change="updateEnvironmentProp(f.key, $event.target.checked)"
+              v-if="f.type === 'color'"
+              type="color"
+              :value="ground.props[f.key]"
+              @input="updateGroundProp(f.key, $event.target.value)"
             />
             <input
               v-else
               type="number"
+              :value="ground.props[f.key]"
+              :min="f.min"
+              :step="f.step"
+              @input="numInput((v) => updateGroundProp(f.key, v), $event)"
+            />
+          </div>
+        </section>
+
+        <section class="insp-section">
+          <h4>环境</h4>
+          <div class="form-row">
+            <label>背景色</label>
+            <input
+              type="color"
+              :value="editor.doc.scene.background"
+              @input="updateBackground($event.target.value)"
+            />
+          </div>
+        </section>
+
+        <section id="insp-env" class="insp-section">
+          <h4>环境天空盒</h4>
+          <template v-if="envActive">
+            <div class="form-row">
+              <label>当前环境</label>
+              <span class="readonly env-name" :title="envDoc.assetName">{{ envDoc.assetName }}</span>
+            </div>
+            <div v-for="f in ENV_FORM" :key="f.key" class="form-row">
+              <label>{{ f.label }}</label>
+              <input
+                v-if="f.type === 'switch'"
+                type="checkbox"
+                :checked="envDoc.props?.[f.key] !== false"
+                @change="updateEnvironmentProp(f.key, $event.target.checked)"
+              />
+              <input
+                v-else
+                type="number"
+                :min="f.min"
+                :max="f.max"
+                :step="f.step"
+                :value="envDoc.props?.[f.key]"
+                @input="numInput((v) => updateEnvironmentProp(f.key, v), $event)"
+              />
+            </div>
+          </template>
+          <p v-else class="insp-hint">未使用环境贴图（左侧「环境」栏上传 .hdr）</p>
+        </section>
+      </template>
+
+      <!-- ===== 节点属性 ===== -->
+      <template v-else-if="node">
+        <section class="insp-section">
+          <h4>基础</h4>
+          <div class="form-row">
+            <label>名称</label>
+            <input
+              class="text-input"
+              type="text"
+              :value="node.name"
+              @input="updateNodeName(node.id, $event.target.value)"
+            />
+          </div>
+          <div class="form-row">
+            <label>类型</label>
+            <span class="readonly">{{ node.type }}</span>
+          </div>
+        </section>
+
+        <section class="insp-section">
+          <h4>变换</h4>
+          <div v-for="part in transformParts" :key="part.key" class="transform-block">
+            <div class="transform-label">{{ part.label }}</div>
+            <div class="transform-row">
+              <div v-for="(axis, i) in axes" :key="axis" class="transform-cell">
+                <span :class="['axis', axis.toLowerCase()]">{{ axis }}</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  :value="node.transform[part.key][i]"
+                  @input="numInput((v) => updateNodeTransform(node.id, part.key, i, v), $event)"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <PointListEditor
+          v-if="node && pointConfig"
+          :node="node"
+          v-bind="pointConfig"
+          @point="(i, a, v) => updatePathPoint(node.id, i, a, v)"
+          @add="addPathPoint(node.id)"
+          @remove="(i) => removePathPoint(node.id, i)"
+          @move="(i, dir) => movePathPoint(node.id, i, dir)"
+          @preset="(key) => applyPathPreset(node.id, key)"
+        />
+
+        <section v-if="nodeForm.length" class="insp-section">
+          <h4>参数</h4>
+          <div v-for="f in nodeForm" :key="f.key" class="form-row" :title="f.hint || ''">
+            <label>{{ f.label }}</label>
+            <input
+              v-if="f.type === 'text'"
+              type="text"
+              class="text-input"
+              :placeholder="f.placeholder"
+              :value="node.props[f.key]"
+              spellcheck="false"
+              @input="updateNodeProps(node.id, f.key, $event.target.value)"
+            />
+            <input
+              v-else-if="f.type === 'color'"
+              type="color"
+              :value="node.props[f.key]"
+              @input="updateNodeProps(node.id, f.key, $event.target.value)"
+            />
+            <input
+              v-else-if="f.type === 'switch'"
+              type="checkbox"
+              :checked="!!node.props[f.key]"
+              @change="updateNodeProps(node.id, f.key, $event.target.checked)"
+            />
+            <em v-if="f.hint" class="field-hint">{{ f.hint }}</em>
+            <select
+              v-else-if="f.type === 'select'"
+              class="select-input"
+              :value="node.props[f.key]"
+              @change="updateNodeProps(node.id, f.key, $event.target.value)"
+            >
+              <option v-for="o in f.options" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </option>
+            </select>
+            <textarea
+              v-else-if="f.type === 'textarea'"
+              class="text-area"
+              :rows="f.rows || 6"
+              :placeholder="f.placeholder"
+              :value="node.props[f.key]"
+              spellcheck="false"
+              @input="updateNodeProps(node.id, f.key, $event.target.value)"
+            ></textarea>
+            <input
+              v-else
+              type="number"
+              :value="node.props[f.key]"
               :min="f.min"
               :max="f.max"
               :step="f.step"
-              :value="envDoc.props?.[f.key]"
-              @input="numInput((v) => updateEnvironmentProp(f.key, v), $event)"
+              @input="numInput((v) => updateNodeProps(node.id, f.key, v), $event)"
             />
           </div>
-        </template>
-        <p v-else class="insp-hint">未使用环境贴图（左侧「⑦ 环境天空盒」上传 .hdr）</p>
-      </section>
-    </template>
+        </section>
 
-    <!-- ===== 节点属性 ===== -->
-    <template v-else-if="node">
-      <div class="insp-title">
-        <span class="kind-tag">{{ kindTag(node.kind) }}</span>
-        节点属性
-      </div>
+        <button class="delete-btn" @click="removeNode(node.id)">删除节点（Delete）</button>
+      </template>
 
-      <section class="insp-section">
-        <h4>基础</h4>
-        <div class="form-row">
-          <label>名称</label>
-          <input
-            class="text-input"
-            type="text"
-            :value="node.name"
-            @input="updateNodeName(node.id, $event.target.value)"
-          />
-        </div>
-        <div class="form-row">
-          <label>类型</label>
-          <span class="readonly">{{ node.type }}</span>
-        </div>
-      </section>
-
-      <section class="insp-section">
-        <h4>变换</h4>
-        <div v-for="part in transformParts" :key="part.key" class="transform-block">
-          <div class="transform-label">{{ part.label }}</div>
-          <div class="transform-row">
-            <div v-for="(axis, i) in axes" :key="axis" class="transform-cell">
-              <span :class="['axis', axis.toLowerCase()]">{{ axis }}</span>
-              <input
-                type="number"
-                step="0.1"
-                :value="node.transform[part.key][i]"
-                @input="numInput((v) => updateNodeTransform(node.id, part.key, i, v), $event)"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <PointListEditor
-        v-if="node && pointConfig"
-        :node="node"
-        v-bind="pointConfig"
-        @point="(i, a, v) => updatePathPoint(node.id, i, a, v)"
-        @add="addPathPoint(node.id)"
-        @remove="(i) => removePathPoint(node.id, i)"
-        @move="(i, dir) => movePathPoint(node.id, i, dir)"
-        @preset="(key) => applyPathPreset(node.id, key)"
-      />
-
-      <section v-if="nodeForm.length" class="insp-section">
-        <h4>参数</h4>
-        <div v-for="f in nodeForm" :key="f.key" class="form-row" :title="f.hint || ''">
-          <label>{{ f.label }}</label>
-          <input
-            v-if="f.type === 'text'"
-            type="text"
-            class="text-input"
-            :placeholder="f.placeholder"
-            :value="node.props[f.key]"
-            spellcheck="false"
-            @input="updateNodeProps(node.id, f.key, $event.target.value)"
-          />
-          <input
-            v-else-if="f.type === 'color'"
-            type="color"
-            :value="node.props[f.key]"
-            @input="updateNodeProps(node.id, f.key, $event.target.value)"
-          />
-          <input
-            v-else-if="f.type === 'switch'"
-            type="checkbox"
-            :checked="!!node.props[f.key]"
-            @change="updateNodeProps(node.id, f.key, $event.target.checked)"
-          />
-          <em v-if="f.hint" class="field-hint">{{ f.hint }}</em>
-          <select
-            v-else-if="f.type === 'select'"
-            class="select-input"
-            :value="node.props[f.key]"
-            @change="updateNodeProps(node.id, f.key, $event.target.value)"
-          >
-            <option v-for="o in f.options" :key="o.value" :value="o.value">
-              {{ o.label }}
-            </option>
-          </select>
-          <textarea
-            v-else-if="f.type === 'textarea'"
-            class="text-area"
-            :rows="f.rows || 6"
-            :placeholder="f.placeholder"
-            :value="node.props[f.key]"
-            spellcheck="false"
-            @input="updateNodeProps(node.id, f.key, $event.target.value)"
-          ></textarea>
-          <input
-            v-else
-            type="number"
-            :value="node.props[f.key]"
-            :min="f.min"
-            :max="f.max"
-            :step="f.step"
-            @input="numInput((v) => updateNodeProps(node.id, f.key, v), $event)"
-          />
-        </div>
-      </section>
-
-      <button class="delete-btn" @click="removeNode(node.id)">删除节点（Delete）</button>
-    </template>
-
-    <template v-else>
-      <div class="insp-empty">节点不存在或已被删除</div>
-    </template>
+      <template v-else>
+        <div class="insp-empty">节点不存在或已被删除</div>
+      </template>
     </div>
-    <div v-if="!collapsed" class="insp-resize-handle" title="拖动调整宽度" @pointerdown="startResize"></div>
+
+    <div v-if="ui.inspectorOpen" class="insp-resize-handle" title="拖动调整宽度" @pointerdown="startResize"></div>
+
+    <LoginDialog :open="loginOpen" @logged-in="loginOpen = false" @close="loginOpen = false" />
   </aside>
 </template>
 
 <style scoped>
 .inspector {
-  position: relative;
+  position: relative; /* 拖拽手柄的定位基准 */
   width: 292px;
-  min-width: 48px;
+  min-width: 52px;
   flex-shrink: 0;
-  background: var(--c-panel);
-  border: 1px solid #292a2c;
-  border-radius: 22px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
   transition: width 180ms ease;
 }
-.inspector.resizing { transition: none; }
-.insp-shell-head {
-  flex: 0 0 42px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  color: var(--t-strong);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  border-bottom: 1px solid rgb(255 255 255 / 6%);
+.inspector.resizing {
+  transition: none;
 }
-.insp-content {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px 16px 18px;
-  flex: 1;
-}
-.inspector.collapsed .insp-shell-head { justify-content: center; padding: 0; }
-.insp-resize-handle {
-  position: absolute;
-  z-index: 2;
-  left: -3px;
-  top: 48px;
-  bottom: 0;
-  width: 7px;
-  cursor: col-resize;
-  touch-action: none;
-}
-.insp-resize-handle:hover,
-.inspector.resizing .insp-resize-handle { background: var(--accent); opacity: .72; }
-.glass-icon-btn {
-  width: 28px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: #f4f5f7;
-  font-size: 20px;
-  line-height: 1;
-  background: linear-gradient(145deg, rgb(255 255 255 / 17%), rgb(255 255 255 / 4%));
-  border: 1px solid rgb(255 255 255 / 19%);
-  border-radius: 10px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 5px 14px rgb(0 0 0 / 24%);
-  backdrop-filter: blur(12px);
-  cursor: pointer;
-  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
-}
-.glass-icon-btn:hover { transform: translateY(-1px); background: rgb(255 255 255 / 16%); border-color: rgb(255 255 255 / 34%); }
-.glass-icon-btn:active { transform: translateY(0) scale(.96); }
-.insp-title { display: none; }
-.insp-title {
+.panel-head {
+  flex: 0 0 44px;
   display: flex;
   align-items: center;
   gap: var(--s-2);
+  padding: 0 var(--s-3);
+}
+/* 折叠钮：左右两个面板同一个长相，但各自的 scoped 里各写一份（不共享样式） */
+.inspector .head-btn {
+  margin-left: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--c-glass);
+  border-radius: var(--r-sm);
+  background: var(--grad-glass);
+  color: var(--t-muted);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+.inspector .head-btn:hover {
+  color: var(--t-strong);
+  border-color: var(--c-glass-strong);
+  background: rgb(255 255 255 / 11%);
+}
+.inspector .head-btn:active {
+  transform: scale(0.96);
+}
+.panel-title {
   font-size: var(--fs-md);
   font-weight: 600;
   color: var(--t-strong);
-  margin-bottom: var(--s-3);
+  white-space: nowrap;
 }
-/* 标签上不再按 light/model/pipe/effect/html 分糖果色：种类靠文字，颜色只表达状态 */
+.head-tag {
+  margin-left: auto;
+  font-size: var(--fs-2xs);
+  padding: 2px var(--s-2);
+  border-radius: var(--r-pill);
+  color: var(--t-muted);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--c-glass);
+}
+/* 折叠后整栏竖排，只留一个展开钮 */
+.inspector.collapsed .panel-head {
+  justify-content: center;
+  padding: 0;
+}
+.caret {
+  display: inline-block;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--t-muted);
+  transition: transform var(--dur) var(--ease);
+}
+.caret.shut {
+  transform: rotate(180deg);
+}
+.head-btn:hover .caret {
+  color: var(--t-strong);
+}
+
+.insp-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--s-3) var(--s-4);
+  flex: 1;
+}
+/* 登录提示横幅：位置和 Tripo 的升级横幅一样，说的是真事 */
+.insp-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgb(255 212 41 / 14%), rgb(255 212 41 / 4%));
+  border: 1px solid var(--accent-line);
+}
+.banner-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  color: var(--t-body);
+}
+.banner-btn {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 var(--s-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--grad-accent);
+  border: 0;
+  border-radius: var(--r-pill);
+  box-shadow: var(--glow-accent);
+  cursor: pointer;
+}
+.banner-btn:hover {
+  filter: brightness(1.06);
+}
+
+/* 分区卡片：属性面板里的一级容器 */
+.insp-section {
+  margin-bottom: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 3%);
+  border: 1px solid var(--c-glass);
+}
+.insp-section h4 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--t-muted);
+  letter-spacing: 0.04em;
+}
 .kind-tag {
   font-size: var(--fs-2xs);
   font-weight: 400;
-  padding: 1px var(--s-1);
-  border-radius: var(--r-sm);
+  padding: 1px var(--s-2);
+  border-radius: var(--r-pill);
   color: var(--t-muted);
-  background: var(--c-active);
-  border: 1px solid var(--c-line);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid var(--c-glass);
 }
 .text-input {
   flex: 1;
   min-width: 0;
-  height: var(--h-ctrl);
+  height: var(--h-btn);
   padding: 0 var(--s-2);
   font-size: var(--fs-xs);
   font-family: var(--font-mono);
   color: var(--t-strong);
-  background: var(--c-viewport);
+  background: var(--c-raised);
   border: 1px solid var(--c-line-strong);
   border-radius: var(--r-sm);
 }
@@ -411,7 +494,7 @@ function numInput(fn, evt, field) {
   line-height: 1.5;
   font-family: var(--font-mono);
   color: var(--t-strong);
-  background: var(--c-viewport);
+  background: var(--c-raised);
   border: 1px solid var(--c-line-strong);
   border-radius: var(--r-sm);
   resize: vertical;
@@ -437,17 +520,6 @@ function numInput(fn, evt, field) {
   height: 16px;
   accent-color: var(--accent);
   cursor: pointer;
-}
-.insp-section {
-  margin-bottom: var(--s-4);
-}
-.insp-section h4 {
-  margin: 0 0 var(--s-2);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--t-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 .form-row {
   display: flex;
@@ -502,7 +574,7 @@ function numInput(fn, evt, field) {
 }
 .form-row input[type='color'] {
   width: 44px;
-  height: var(--h-ctrl);
+  height: var(--h-btn);
   padding: 0;
   border: 1px solid var(--c-line-strong);
   border-radius: var(--r-sm);
@@ -564,7 +636,7 @@ function numInput(fn, evt, field) {
 .ground-types {
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
+  gap: var(--s-1);
 }
 .ground-type {
   display: flex;
@@ -578,36 +650,63 @@ function numInput(fn, evt, field) {
   border: 1px solid var(--c-line);
   border-radius: var(--r-sm);
   cursor: pointer;
+  transition:
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+.ground-type:hover {
+  border-color: var(--accent-line);
+  color: var(--t-strong);
 }
 .ground-type.active {
   border-color: var(--accent);
   background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 /* 四种地面的预览漆已移到 styles/swatches.css 全站共享，这里只留盒子尺寸 */
 .gt-swatch {
-  width: 18px;
-  height: 18px;
-  border-radius: var(--r-sm);
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-xs);
   border: 1px solid var(--c-line-strong);
 }
 .delete-btn {
   width: 100%;
   height: var(--h-row);
-  margin-top: var(--s-2);
+  margin-top: var(--s-1);
   font-size: var(--fs-sm);
   color: var(--danger);
   background: var(--danger-soft);
   border: 1px solid var(--danger-line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-pill);
   cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 .delete-btn:hover {
   border-color: var(--danger);
+  background: rgb(212 101 95 / 22%);
 }
 .insp-empty {
   font-size: var(--fs-sm);
   color: var(--t-faint);
   text-align: center;
   padding: var(--s-5) 0;
+}
+.insp-resize-handle {
+  position: absolute;
+  z-index: 2;
+  left: -3px;
+  top: 48px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.insp-resize-handle:hover,
+.inspector.resizing .insp-resize-handle {
+  background: var(--accent);
+  opacity: 0.72;
 }
 </style>
