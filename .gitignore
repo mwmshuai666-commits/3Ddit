@@ -32,3 +32,8 @@ dist-ssr
 # 播放器包（由 npm run sync:player 从 ../babylon-scene-player/dist 生成）
 public/player/
 /dist.zip
+
+# 独立 VitePress 包（docs）
+docs/node_modules
+docs/.vitepress/dist
+docs/.vitepress/cache
