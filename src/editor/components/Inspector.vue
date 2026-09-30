@@ -10,6 +10,12 @@ import {
   updateNodeProps,
   updateNodeName,
   updateNodeTransform,
+  updateNodeInteraction,
+  toggleInteractionPreview,
+  updateSceneCamera,
+  captureCameraView,
+  captureNodeCameraView,
+  resetCameraView,
   updateGroundProp,
   updateBackground,
   setGroundType,
@@ -24,7 +30,8 @@ import {
   testInject,
 } from '../store/editor'
 import { auth } from '../../store/auth'
-import { findCatalog, findGroundCatalog, ENV_FORM } from '../schema/sceneSchema'
+import { findCatalog, findGroundCatalog, ENV_FORM, normalizeNodeInteraction, normalizeSceneCamera } from '../schema/sceneSchema'
+import { getEngine } from '../core/engineHolder'
 import PointListEditor from './PointListEditor.vue'
 import LoginDialog from './LoginDialog.vue'
 import BindingDialog from './BindingDialog.vue'
@@ -47,6 +54,103 @@ const pointConfig = computed(() =>
 )
 const groundForm = computed(() => findGroundCatalog(editor.doc.scene.ground.type).form)
 const ground = computed(() => editor.doc.scene.ground)
+
+/* ---- 鼠标交互（节点级，见 schema/sceneSchema.js 的 interaction） ---- */
+
+/** 触发方式选项；'none' 时下面的效果区整块收起 */
+const TRIGGER_OPTIONS = [
+  { value: 'none', label: '不交互' },
+  { value: 'click', label: '鼠标点击' },
+  { value: 'hover', label: '鼠标划过' },
+]
+/** 参与交互的 kind（与 core/interactionRuntime 的 SUPPORTED_KINDS 对齐） */
+const INTERACTABLE_KINDS = new Set(['primitive', 'model', 'html', 'web'])
+
+/** 规范化后的交互配置（老文档 / 手改 JSON 也兜得住） */
+const interaction = computed(() => normalizeNodeInteraction(node.value))
+const interactionSupported = computed(
+  () => !!node.value && INTERACTABLE_KINDS.has(node.value.kind),
+)
+function setInteraction(patch) {
+  if (node.value) updateNodeInteraction(node.value.id, patch)
+}
+
+/* ---- 初始视角（scene.camera） ---- */
+
+const RAD2DEG = 180 / Math.PI
+const DEG2RAD = Math.PI / 180
+const round3 = (v) => Math.round(v * 1000) / 1000
+
+/**
+ * 面板回显的机位（度 / 原值）：文档存过按文档；没存过 = 引擎当前视角
+ * （orbit 时数字不会实时跳，点「用当前视角」拿到的永远是最新的）。
+ * 读一眼 editor.loaded：引擎是异步就绪的，非响应式，不依赖它首屏会是空框。
+ */
+const sceneCamera = computed(() => {
+  const saved = normalizeSceneCamera(editor.doc.scene.camera)
+  if (saved) {
+    return {
+      alpha: round3(saved.alpha * RAD2DEG),
+      beta: round3(saved.beta * RAD2DEG),
+      radius: saved.radius,
+      target: saved.target,
+      fromDoc: true,
+    }
+  }
+  const cur = editor.loaded ? getEngine()?.getCameraState?.() : null
+  return cur ? { ...cur, fromDoc: false } : null
+})
+
+function setCameraTargetAxis(axis, value) {
+  const t = sceneCamera.value?.target || [0, 0, 0]
+  const next = [t[0], t[1], t[2]]
+  next[axis] = value
+  updateSceneCamera({ target: next })
+}
+
+/* ---- 视角飞行的指定机位（interaction.camera.view） ---- */
+
+/** 机位回显（度 / 原值）；null = 还没设（此时是「自动框住物体」） */
+const flyView = computed(() => {
+  const v = interaction.value.camera.view
+  if (!v) return null
+  return {
+    alpha: round3(v.alpha * RAD2DEG),
+    beta: round3(v.beta * RAD2DEG),
+    radius: v.radius,
+    target: v.target,
+  }
+})
+
+/** 面板度数 → 文档弧度；缺字段沿现值（partial patch） */
+function setFlyView(patch) {
+  const cur = interaction.value.camera.view
+  setInteraction({
+    camera: {
+      view: {
+        alpha: patch.alpha !== undefined ? patch.alpha * DEG2RAD : cur?.alpha,
+        beta: patch.beta !== undefined ? patch.beta * DEG2RAD : cur?.beta,
+        radius: patch.radius !== undefined ? patch.radius : cur?.radius,
+        target: patch.target || cur?.target || [0, 0, 0],
+      },
+    },
+  })
+}
+
+function setFlyViewAxis(axis, value) {
+  const t = flyView.value?.target || [0, 0, 0]
+  const next = [t[0], t[1], t[2]]
+  next[axis] = value
+  setFlyView({ target: next })
+}
+
+/** 切到「指定机位」且还没有机位时，先把当前视角灌一份，免得五个框全空 */
+function setFlyMode(mode) {
+  setInteraction({ camera: { mode } })
+  if (mode === 'custom' && !interaction.value.camera.view && node.value) {
+    captureNodeCameraView(node.value.id)
+  }
+}
 
 /** 场景级环境（scene.environment）；没配就当成「无环境」 */
 const envDoc = computed(() => {
@@ -213,6 +317,76 @@ function testBinding(payload) {
           </div>
         </section>
 
+        <!-- 初始视角：存在 scene.camera；没存过 = 下面的数字实时反映引擎当前机位 -->
+        <section class="insp-section">
+          <h4>初始视角</h4>
+          <p class="insp-hint">
+            进入场景时相机停在哪（弧度存在文档里，播放器也认）。没设置 = 按地面大小自动取景；
+            文档未存时下面显示的是当前机位。
+          </p>
+          <div class="form-row">
+            <label>水平角(°)</label>
+            <input
+              type="number"
+              step="1"
+              :value="sceneCamera?.alpha"
+              @input="numInput((v) => updateSceneCamera({ alpha: v }), $event)"
+            />
+          </div>
+          <div class="form-row">
+            <label>俯仰角(°)</label>
+            <input
+              type="number"
+              min="0.1"
+              max="89.9"
+              step="1"
+              :value="sceneCamera?.beta"
+              @input="numInput((v) => updateSceneCamera({ beta: v }), $event)"
+            />
+          </div>
+          <div class="form-row">
+            <label>距离</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              :value="sceneCamera?.radius"
+              @input="numInput((v) => updateSceneCamera({ radius: v }), $event)"
+            />
+          </div>
+          <div class="form-row">
+            <label>目标点 X</label>
+            <input
+              type="number"
+              step="0.1"
+              :value="sceneCamera?.target[0]"
+              @input="numInput((v) => setCameraTargetAxis(0, v), $event)"
+            />
+          </div>
+          <div class="form-row">
+            <label>目标点 Y</label>
+            <input
+              type="number"
+              step="0.1"
+              :value="sceneCamera?.target[1]"
+              @input="numInput((v) => setCameraTargetAxis(1, v), $event)"
+            />
+          </div>
+          <div class="form-row">
+            <label>目标点 Z</label>
+            <input
+              type="number"
+              step="0.1"
+              :value="sceneCamera?.target[2]"
+              @input="numInput((v) => setCameraTargetAxis(2, v), $event)"
+            />
+          </div>
+          <div class="form-row btn-row">
+            <button class="mini-btn" @click="captureCameraView()">用当前视角</button>
+            <button class="mini-btn" @click="resetCameraView()">恢复默认</button>
+          </div>
+        </section>
+
         <section class="insp-section">
           <h4>环境</h4>
           <div class="form-row">
@@ -224,7 +398,6 @@ function testBinding(payload) {
             />
           </div>
         </section>
-
         <section id="insp-env" class="insp-section">
           <h4>环境天空盒</h4>
           <template v-if="envActive">
@@ -368,6 +541,188 @@ function testBinding(payload) {
               <Icon name="sliders" :size="12" />
             </button>
           </div>
+        </section>
+
+        <!-- 交互：触发方式 + 效果（半透明 / 外轮廓光 / 视角飞行） -->
+        <section class="insp-section">
+          <h4>交互</h4>
+          <div class="form-row">
+            <label>触发方式</label>
+            <select
+              class="select-input"
+              :value="interaction.trigger"
+              @change="setInteraction({ trigger: $event.target.value })"
+            >
+              <option v-for="o in TRIGGER_OPTIONS" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </option>
+            </select>
+          </div>
+
+          <template v-if="interaction.trigger !== 'none'">
+            <p v-if="!interactionSupported" class="insp-hint">
+              该类型暂不支持交互效果（现支持几何体 / 模型 / HTML / 网页面板）
+            </p>
+            <template v-else>
+              <div class="form-row">
+                <label>半透明</label>
+                <input
+                  type="checkbox"
+                  :checked="interaction.transparent.enabled"
+                  @change="setInteraction({ transparent: { enabled: $event.target.checked } })"
+                />
+              </div>
+              <div v-if="interaction.transparent.enabled" class="form-row">
+                <label>不透明度</label>
+                <input
+                  type="number"
+                  min="0.05"
+                  max="1"
+                  step="0.05"
+                  :value="interaction.transparent.opacity"
+                  @input="numInput((v) => setInteraction({ transparent: { opacity: v } }), $event)"
+                />
+              </div>
+              <div v-if="interaction.transparent.enabled" class="form-row">
+                <label>透明颜色</label>
+                <input
+                  type="color"
+                  :value="interaction.transparent.color"
+                  @input="setInteraction({ transparent: { color: $event.target.value } })"
+                />
+              </div>
+
+              <div class="form-row">
+                <label>外轮廓光</label>
+                <input
+                  type="checkbox"
+                  :checked="interaction.outline.enabled"
+                  @change="setInteraction({ outline: { enabled: $event.target.checked } })"
+                />
+              </div>
+              <div v-if="interaction.outline.enabled" class="form-row">
+                <label>轮廓颜色</label>
+                <input
+                  type="color"
+                  :value="interaction.outline.color"
+                  @input="setInteraction({ outline: { color: $event.target.value } })"
+                />
+              </div>
+
+              <div class="form-row">
+                <label>视角飞行</label>
+                <input
+                  type="checkbox"
+                  :checked="interaction.camera.enabled"
+                  @change="setInteraction({ camera: { enabled: $event.target.checked } })"
+                />
+              </div>
+              <div v-if="interaction.camera.enabled" class="form-row">
+                <label>飞行时长(ms)</label>
+                <input
+                  type="number"
+                  min="200"
+                  max="5000"
+                  step="100"
+                  :value="interaction.camera.duration"
+                  @input="numInput((v) => setInteraction({ camera: { duration: v } }), $event)"
+                />
+              </div>
+              <div v-if="interaction.camera.enabled" class="form-row">
+                <label>飞行方式</label>
+                <select
+                  class="select-input"
+                  :value="interaction.camera.mode"
+                  @change="setFlyMode($event.target.value)"
+                >
+                  <option value="auto">自动框住物体</option>
+                  <option value="custom">指定机位</option>
+                </select>
+              </div>
+              <template v-if="interaction.camera.enabled && interaction.camera.mode === 'custom'">
+                <div class="form-row">
+                  <label>水平角(°)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    :value="flyView?.alpha"
+                    @input="numInput((v) => setFlyView({ alpha: v }), $event)"
+                  />
+                </div>
+                <div class="form-row">
+                  <label>俯仰角(°)</label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="89.9"
+                    step="1"
+                    :value="flyView?.beta"
+                    @input="numInput((v) => setFlyView({ beta: v }), $event)"
+                  />
+                </div>
+                <div class="form-row">
+                  <label>距离</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    :value="flyView?.radius"
+                    @input="numInput((v) => setFlyView({ radius: v }), $event)"
+                  />
+                </div>
+                <div class="form-row">
+                  <label>目标点 X</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    :value="flyView?.target[0]"
+                    @input="numInput((v) => setFlyViewAxis(0, v), $event)"
+                  />
+                </div>
+                <div class="form-row">
+                  <label>目标点 Y</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    :value="flyView?.target[1]"
+                    @input="numInput((v) => setFlyViewAxis(1, v), $event)"
+                  />
+                </div>
+                <div class="form-row">
+                  <label>目标点 Z</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    :value="flyView?.target[2]"
+                    @input="numInput((v) => setFlyViewAxis(2, v), $event)"
+                  />
+                </div>
+                <div class="form-row btn-row">
+                  <button class="mini-btn" @click="captureNodeCameraView(node.id)">
+                    用当前视角
+                  </button>
+                </div>
+                <p class="insp-hint">
+                  机位是这个节点专属的「飞到哪里」：调好视角后点「用当前视角」录入，
+                  五个数值也能手改。alpha 会绕最短方向转过去，不会掉头转一整圈。
+                </p>
+              </template>
+            </template>
+          </template>
+
+          <div class="form-row" title="编辑器里的触发预览；关掉不影响存档与导出">
+            <label>编辑器预览</label>
+            <input
+              type="checkbox"
+              :checked="ui.interactionPreview"
+              @change="toggleInteractionPreview()"
+            />
+          </div>
+          <p class="insp-hint">
+            半透明 / 轮廓光是「触发时叠加、失焦时恢复」：划过即生效、移出还原；
+            点击后保持生效，点到别的节点或空白处才还原（点同一个会重新取景）。
+            视角飞行用 babylon-datav 同款缓动相机。配置存在场景文档里，导出后同样带得走。
+          </p>
         </section>
 
         <!-- 数据接入：显隐 / 流向是运行时效果（显隐不在 form 里），单独给入口 -->
@@ -795,6 +1150,28 @@ function testBinding(payload) {
 .delete-btn:hover {
   border-color: var(--danger);
   background: rgb(212 101 95 / 22%);
+}
+/* 分区里的小按钮行（初始视角的「用当前视角 / 恢复默认」） */
+.btn-row {
+  gap: var(--s-2);
+  margin-bottom: 0;
+}
+.mini-btn {
+  flex: 1;
+  height: var(--h-btn);
+  font-size: var(--fs-xs);
+  color: var(--t-body);
+  background: var(--c-raised);
+  border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+.mini-btn:hover {
+  color: var(--t-strong);
+  border-color: var(--accent-line);
 }
 .insp-empty {
   font-size: var(--fs-sm);

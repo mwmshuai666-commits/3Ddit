@@ -6,6 +6,7 @@
  *  - 底板地面、参数化几何体、灯光的实例化与销毁
  *  - 点选、Gizmo（移动/旋转/缩放）、选中描边
  *  - Gizmo 拖拽结束把 transform 回写给 store
+ *  - 节点鼠标交互（点击/划过 → 半透明 / 外轮廓光 / 视角飞行，见 core/interactionRuntime.js）
  *  - 文档（场景 JSON）的整体加载/重建
  *
  * 通信方式：构造时传入 callbacks（onSelectionChange / onTransform），
@@ -37,7 +38,8 @@ import {
 import { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader'
 import { registerBuiltInLoaders } from '@babylonjs/loaders/dynamic'
 import { findCatalog } from '../schema/sceneSchema'
-import { ENV_DEFAULT_PROPS } from '../schema/sceneSchema'
+import { ENV_DEFAULT_PROPS, normalizeSceneCamera, normalizeNodeInteraction } from '../schema/sceneSchema'
+import InteractionRuntime from './interactionRuntime'
 import {
   createPipeVisual,
   disposePipeVisual,
@@ -112,6 +114,8 @@ export default class EditorEngine {
     this._selectedId = null
     this._gizmoMode = 'translate'
     this._disposed = false
+    /** 初始机位（scene.camera，弧度）；null = 按地面大小自动取景 */
+    this._initialCamera = null
 
     this.engine = new Engine(canvas, true, { antialias: true, alpha: false }, true)
     this.scene = new Scene(this.engine)
@@ -125,6 +129,8 @@ export default class EditorEngine {
     this._initCamera()
     this._initGizmos()
     this._initPicking()
+    // 鼠标交互（悬停 / 点击 → 透明 / 轮廓光 / 视角飞行）的常驻运行时
+    this.interactions = new InteractionRuntime(this)
 
     // 灯光每帧从 wrapper 朝向同步方向；能量管道每帧滚流动光带
     const up = Vector3.Up()
@@ -194,7 +200,12 @@ export default class EditorEngine {
     )
     this.camera.minZ = 0.1
     this.camera.lowerRadiusLimit = 1
-    this.camera.upperRadiusLimit = 2000
+    // 拉远范围：老上限 2000 对几十单位的物体够用，但园区 / 大场景把镜头往后拉时，
+    // 先是 radius 顶到 2000 拉不动，接着地面又被远裁剪面（Camera 默认 maxZ 10000）
+    // 齐平切掉 —— 观感就是「视角放大罩不住全场景」。半径上限和远裁剪面一起放大：
+    // 天空盒本身 infiniteDistance + ignoreCameraMaxZ，不受 maxZ 影响。
+    this.camera.upperRadiusLimit = 10000
+    this.camera.maxZ = 30000
     this.camera.lowerBetaLimit = 0.02
     this.camera.upperBetaLimit = Math.PI / 2 - 0.02 // 不允许钻到地面以下
     this.camera.wheelDeltaPercentage = 0.01
@@ -248,8 +259,12 @@ export default class EditorEngine {
     // 清空旧内容
     for (const id of [...this.entries.keys()]) this._disposeEntry(id)
     this.setSelected(null)
+    // 交互运行时的整场重置：旧节点的生效效果（透明/轮廓）不能残留到新场景上
+    this.interactions.reset()
     this._buildGround(doc.scene.ground)
     this.scene.clearColor = Color3.FromHexString(doc.scene.background || '#05070d').toColor4(1)
+    // 初始机位：文档里存了一份就听它的；没有（老文档 / null）退回按地面自动取景
+    this._initialCamera = normalizeSceneCamera(doc.scene.camera)
 
     // 模型节点异步加载（blob 由 store 层从素材库解析），互不阻塞
     const pending = doc.nodes.map(async (node) => {
@@ -267,12 +282,17 @@ export default class EditorEngine {
     pending.push(this._restoreEnvironment(doc.scene.environment))
     await Promise.all(pending)
 
-    // 相机取景：按地面大小给一个合理的初始视角（俯角别压太低，见 INIT_BETA 注释）
+    // 相机取景：有初始机位（scene.camera）就听文档的；没有才按地面大小给默认取景
+    // （俯角别压太低，见 INIT_BETA 注释）
     const size = doc.scene.ground.props.size || 200
-    this.camera.alpha = -Math.PI / 2
-    this.camera.beta = INIT_BETA
-    this.camera.radius = Math.max(20, size * INIT_RADIUS_RATIO)
-    this.camera.target.set(0, Math.max(1, size * INIT_TARGET_Y_RATIO), 0)
+    if (this._initialCamera) {
+      this._applyCameraView(this._initialCamera)
+    } else {
+      this.camera.alpha = -Math.PI / 2
+      this.camera.beta = INIT_BETA
+      this.camera.radius = Math.max(20, size * INIT_RADIUS_RATIO)
+      this.camera.target.set(0, Math.max(1, size * INIT_TARGET_Y_RATIO), 0)
+    }
     // 记住这份「首页视角」，frameAll 在空场景时用它归位
     this._homeView = {
       alpha: this.camera.alpha,
@@ -556,8 +576,16 @@ export default class EditorEngine {
     this._instantiate(node)
   }
 
+  /** 节点实例化时登记鼠标交互配置（效果生效在事件发生时读，见 interactionRuntime） */
+  _attachInteraction(node) {
+    if (node?.id) {
+      this.interactions.attach(node.id, normalizeNodeInteraction(node))
+    }
+  }
+
   /** 素材缺失/加载失败时的占位：保留节点，场景树/删除仍可用 */
   _addEmptyModel(node) {
+    this._attachInteraction(node)
     const wrapper = new TransformNode(`w_${node.id}`, this.scene)
     wrapper.metadata = { nodeId: node.id }
     this._applyTransform(wrapper, node.transform)
@@ -582,6 +610,7 @@ export default class EditorEngine {
   async addModelNode(node, file, { dropToGround = true } = {}) {
     // 已存在（如重复调用）先占位重建
     if (!this.entries.has(node.id)) this._addEmptyModel(node)
+    this._attachInteraction(node)
     const entry = this.entries.get(node.id)
     entry.loading = true
 
@@ -696,6 +725,7 @@ export default class EditorEngine {
 
     this._applyTransform(wrapper, node.transform)
     this.entries.set(node.id, entry)
+    this._attachInteraction(node)
     // 显隐基线：node.hidden 是手动设置（SceneTree 眼睛），数据注入的 visible 之后覆盖它
     entry.visible = true
     if (node.hidden === true) this.setNodeVisible(node.id, false)
@@ -834,6 +864,19 @@ export default class EditorEngine {
    */
   renameNode() {}
 
+  /**
+   * 交互配置热更（Inspector「交互」分区）：先还原旧效果，再登记新配置。
+   * 入参收裸 interaction（运行时 normalize），store 存的是文档级规范化值。
+   */
+  updateInteraction(nodeId, interaction) {
+    this.interactions.update(nodeId, normalizeNodeInteraction({ interaction }))
+  }
+
+  /** 编辑器交互预览开关（不动文档：只影响编辑器里触不触发） */
+  setInteractionEnabled(flag) {
+    this.interactions.setEnabled(flag)
+  }
+
   updateProps(nodeId, props) {
     const entry = this.entries.get(nodeId)
     if (!entry) return
@@ -849,6 +892,8 @@ export default class EditorEngine {
       oldMesh.dispose()
       entry.object = newMesh
       entry.material = newMesh.material
+      // 旧网格没了：该节点生效中的交互效果（描边选择集 / 透明快照）作废
+      this.interactions.onMeshReplaced(nodeId)
       if (wasSelected) this._setMeshHighlight(newMesh, true)
     } else if (entry.kind === 'light') {
       this._applyLightProps(entry.object, entry.type, props)
@@ -1000,6 +1045,9 @@ export default class EditorEngine {
   _disposeEntry(nodeId) {
     const entry = this.entries.get(nodeId)
     if (!entry) return
+    // 交互残留先收：半透明快照 / 轮廓光引用的网格马上就要 dispose，
+    // 晚一步 removeMesh 会拿到已释放的网格
+    this.interactions.clearNode(nodeId)
     if (entry.kind === 'model') {
       // 加载过程中删除：标记取消，异步回来后由 addModelNode 自行释放
       if (entry.loading) entry.cancelled = true
@@ -1169,16 +1217,19 @@ export default class EditorEngine {
     })
   }
 
-  /** 镜头飞到选中物 */
-  frameSelected(nodeId) {
+  /**
+   * 算「框住这个节点」的取景点：包围盒中心做 target、对角线长两倍多点的半径。
+   * frameSelected（瞬时到位）和交互的视角飞行（缓动过去）共用这一套口径。
+   * @param {string} nodeId
+   * @returns {{target:Vector3, radius:number}|null} 没有包围盒（空占位模型）时 null
+   */
+  frameTargetOf(nodeId) {
     const entry = this.entries.get(nodeId)
-    if (!entry) return
-    const p = entry.wrapper.absolutePosition
-    this.camera.target.set(p.x, Math.max(p.y, 1), p.z)
+    if (!entry) return null
 
     let bounds = null
     if (entry.kind === 'primitive' || entry.kind === 'html' || entry.kind === 'web') {
-      bounds = entry.object.getHierarchyBoundingVectors?.()
+      bounds = entry.object?.getHierarchyBoundingVectors?.()
     } else if (entry.kind === 'pipe' && entry.visual?.tube) {
       bounds = entry.visual.tube.getHierarchyBoundingVectors?.()
     } else if (entry.kind === 'effect' && entry.object && !entry.object.isDisposed()) {
@@ -1195,9 +1246,90 @@ export default class EditorEngine {
       }
       bounds = min && max ? { min, max } : null
     }
-    if (bounds) {
-      const size = Vector3.Distance(bounds.max, bounds.min)
-      this.camera.radius = Math.max(3, Math.min(size * 2.2, this.camera.radius))
+    if (!bounds) return null
+
+    const center = Vector3.Center(bounds.min, bounds.max)
+    const span = Vector3.Distance(bounds.min, bounds.max)
+    return {
+      target: new Vector3(center.x, Math.max(center.y, 1), center.z),
+      radius: Math.max(3, Math.min(span * 2.2, this.camera.upperRadiusLimit)),
+    }
+  }
+
+  /** 镜头飞到选中物 */
+  frameSelected(nodeId) {
+    const frame = this.frameTargetOf(nodeId)
+    if (frame) {
+      // 和老口径的一点差异：target 用包围盒中心而不是 wrapper 原点 ——
+      // 模型根节点不在几何中心时（大部分 glb），老口径会把镜头怼到模型的角落
+      this.camera.target.set(frame.target.x, frame.target.y, frame.target.z)
+      // 只拉近不推远：F 键聚焦不该把相机猛地退到几十米外
+      this.camera.radius = Math.min(frame.radius, this.camera.radius)
+      return
+    }
+    // 没有包围盒（空占位模型）：退回 wrapper 位置，距离不动
+    const entry = this.entries.get(nodeId)
+    if (!entry) return
+    const p = entry.wrapper.absolutePosition
+    this.camera.target.set(p.x, Math.max(p.y, 1), p.z)
+  }
+
+  /* ============ 初始机位（scene.camera） ============ */
+
+  /**
+   * 应用一份机位（弧度 / 归一化后的 scene.camera 形状）。
+   * @param {{alpha:number, beta:number, radius:number, target:[number,number,number]}} view
+   */
+  _applyCameraView(view) {
+    this.camera.alpha = view.alpha
+    this.camera.beta = Math.min(
+      this.camera.upperBetaLimit,
+      Math.max(this.camera.lowerBetaLimit, view.beta),
+    )
+    this.camera.radius = Math.min(
+      this.camera.upperRadiusLimit,
+      Math.max(this.camera.lowerRadiusLimit, view.radius),
+    )
+    this.camera.target.set(view.target[0], view.target[1], view.target[2])
+  }
+
+  /** 当前机位快照：alpha / beta 给「度」（面板按度编辑），半径、目标原样 */
+  getCameraState() {
+    const t = this.camera.target
+    return {
+      alpha: Math.round(this.camera.alpha * (180 / Math.PI) * 1000) / 1000,
+      beta: Math.round(this.camera.beta * (180 / Math.PI) * 1000) / 1000,
+      radius: Math.round(this.camera.radius * 1000) / 1000,
+      target: [
+        Math.round(t.x * 1000) / 1000,
+        Math.round(t.y * 1000) / 1000,
+        Math.round(t.z * 1000) / 1000,
+      ],
+    }
+  }
+
+  /**
+   * 设 / 清初始机位：panel「用当前视角 / 恢复默认」调这里。
+   * @param {{alpha:number, beta:number, radius:number, target:[number,number,number]}|null} camera 弧度；null = 清除，恢复默认取景
+   */
+  setInitialCamera(camera) {
+    const view = camera ? normalizeSceneCamera(camera) : null
+    this._initialCamera = view
+    if (view) {
+      this._applyCameraView(view)
+    } else {
+      // 恢复默认：按地面大小重新取景（loadDocument 结尾那套）
+      const size = this.groundEntry?.mesh?.size || this.groundEntry?.props?.size || 200
+      this.camera.alpha = -Math.PI / 2
+      this.camera.beta = INIT_BETA
+      this.camera.radius = Math.max(20, size * INIT_RADIUS_RATIO)
+      this.camera.target.set(0, Math.max(1, size * INIT_TARGET_Y_RATIO), 0)
+    }
+    this._homeView = {
+      alpha: this.camera.alpha,
+      beta: this.camera.beta,
+      radius: this.camera.radius,
+      target: this.camera.target.clone(),
     }
   }
 
@@ -1205,6 +1337,7 @@ export default class EditorEngine {
 
   dispose() {
     this._disposed = true
+    this.interactions?.dispose()
     window.removeEventListener('resize', this._onResize)
     this._resizeObserver?.disconnect()
     this._resizeObserver = null

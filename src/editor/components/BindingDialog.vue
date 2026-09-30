@@ -15,7 +15,8 @@ import AppModal from './AppModal.vue'
 import Icon from './Icon.vue'
 import { dataHub } from '../core/dataHub'
 import { evaluateBinding, pickPath } from '../core/binding'
-import { editor, addDataSource } from '../store/editor'
+import { editor, addDataSource, removeDataSource } from '../store/editor'
+import { findCatalog } from '../schema/sceneSchema'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -41,6 +42,8 @@ const stops = ref([])
 const below = ref(undefined)
 /** dataHub 的 status 不是响应式的，弹窗开着每秒推一次让在线点/错误信息保持新鲜 */
 const now = ref(0)
+/** 本次弹窗通过「＋」新建的源 id：关闭时没人引用的要回收（见 onClose） */
+const createdSourceIds = ref([])
 let statusTimer = null
 onMounted(() => {
   statusTimer = setInterval(() => {
@@ -50,46 +53,81 @@ onMounted(() => {
 onBeforeUnmount(() => clearInterval(statusTimer))
 
 function defaultStop() {
-  if (props.fieldType === 'color') return { at: 0, out: '#00e5ff' }
-  if (props.fieldType === 'switch') return { at: 1, out: 1 } // ≥1 显示
+  if (fieldType.value === 'color') return { at: 0, out: '#00e5ff' }
+  if (fieldType.value === 'switch') return { at: 1, out: 1 } // ≥1 显示
   return { at: 0, out: 0 }
 }
 
 // 每次打开用已有绑定回填草稿。
 // 注意：弹窗是 v-if 每次全新挂载、open 又是常量 true，watch 不会因「变化」触发，
 // 所以必须 immediate —— 否则草稿永远是空值（sourceId 为空 → 存出永远不生效的绑定）。
-watch(
-  () => props.open,
-  (v) => {
-    if (!v) return
-    const b = props.binding
-    sourceId.value = b?.source || sources.value[0]?.id || ''
-    field.value = b?.field || 'value'
-    // 默认映射按目标字段类型给：颜色/开关天然是「阈值查表」，
-    // 透传只适合数值字段——早期默认 direct，用户给颜色绑 direct 得到死绑定
-    map.value = b?.map || (props.fieldType === 'color' || props.fieldType === 'switch' ? 'threshold' : 'direct')
-    inRange.value = b?.in ? [...b.in] : [0, 100]
-    outRange.value = b?.out ? [...b.out] : [0, 1]
-    // 载入旧绑定时按目标字段类型净化 stops：色值字段收字符串、其余强转数字，
-    // 否则颜色字符串会灌进 type=number 的输入框（浏览器报 "cannot be parsed"）
-    stops.value = (b?.stops?.length ? b.stops : [defaultStop()]).map((s) => ({
-      at: Number(s.at) || 0,
-      out: props.fieldType === 'color' ? String(s.out ?? '#ffffff') : Number(s.out) || 0,
+
+/** 目标字段由打开弹窗的入口决定（哪个字段行尾的按钮点进来的）；本地镜像一份供内部用 */
+const fieldKey = ref(props.fieldKey)
+const fieldType = ref(props.fieldType)
+
+/** 可绑字段的类型（与 Inspector 的 BINDABLE_TYPES 一致） */
+const BINDABLE_TYPES = ['color', 'number', 'switch', 'select']
+
+/**
+ * 这个节点上所有能绑的字段：表单里的 color/number/switch/select + 固定的「显示」。
+ * 柔性管道有 6 个可绑字段（颜色/管径/折角/分段/速度/段数），以前得点 6 个行尾
+ * 小按钮；现在一个弹窗里换着绑。
+ */
+const bindableFields = computed(() => {
+  const node = editor.doc.nodes.find((n) => n.id === props.nodeId)
+  const form = (node && findCatalog(node.kind, node.type)?.form) || []
+  const fields = form
+    .filter((f) => BINDABLE_TYPES.includes(f.type))
+    .map((f) => ({
+      // 面板叫「流向」，绑定的 key 是 direction（和 Inspector 的 bindKeyOf 同规则）
+      key: f.key === 'dir' ? 'direction' : f.key,
+      label: f.label,
+      type: f.type,
     }))
-    below.value = b?.below !== undefined
-      ? (props.fieldType === 'color'
-        ? (typeof b.below === 'string' && /^#[0-9a-f]/i.test(b.below) ? b.below : undefined)
-        : Number(b.below) || 0)
-      : (props.fieldType === 'switch' ? 0 : undefined)
-  },
-  { immediate: true },
+  fields.unshift({ key: 'visible', label: '显示 / 隐藏', type: 'switch' })
+  return fields
+})
+
+const currentFieldLabel = computed(
+  () => bindableFields.value.find((f) => f.key === fieldKey.value)?.label || fieldKey.value,
 )
+
+/** 按当前目标字段载入草稿：该字段已有绑定 → 没有就按字段类型给默认值 */
+function loadDraft() {
+  fieldType.value = bindableFields.value.find((f) => f.key === fieldKey.value)?.type || 'number'
+  const node = editor.doc.nodes.find((n) => n.id === props.nodeId)
+  const b = (node?.bindings || []).find((x) => x && x.key === fieldKey.value) || props.binding
+  sourceId.value = b?.source || sources.value[0]?.id || ''
+  field.value = b?.field || 'value'
+  // 默认映射按目标字段类型给：颜色/开关天然是「阈值查表」，
+  // 透传只适合数值字段——早期默认 direct，用户给颜色绑 direct 得到死绑定
+  map.value = b?.map || (fieldType.value === 'color' || fieldType.value === 'switch' ? 'threshold' : 'direct')
+  inRange.value = b?.in ? [...b.in] : [0, 100]
+  outRange.value = b?.out ? [...b.out] : [0, 1]
+  // 载入旧绑定时按目标字段类型净化 stops：色值字段收字符串、其余强转数字，
+  // 否则颜色字符串会灌进 type=number 的输入框（浏览器报 "cannot be parsed"）
+  stops.value = (b?.stops?.length ? b.stops : [defaultStop()]).map((s) => ({
+    at: Number(s.at) || 0,
+    out: fieldType.value === 'color' ? String(s.out ?? '#ffffff') : Number(s.out) || 0,
+  }))
+  below.value = b?.below !== undefined
+    ? (fieldType.value === 'color'
+      ? (typeof b.below === 'string' && /^#[0-9a-f]/i.test(b.below) ? b.below : undefined)
+      : Number(b.below) || 0)
+    : (fieldType.value === 'switch' ? 0 : undefined)
+}
+
+// 打开时回填一次（弹窗 v-if 全新挂载，必须 immediate，见上方注释）
+watch(() => props.open, (v) => { if (v) loadDraft() }, { immediate: true })
+// 弹窗里换目标字段：换成那个字段自己的绑定 / 默认值，整份草稿跟着换
+watch(fieldKey, () => loadDraft())
 
 /** 实时预览：当前数据下这一绑定会注入什么值 */
 const preview = computed(() => {
   if (!sourceId.value) return null
   const hit = evaluateBinding(
-    { key: props.fieldKey, ...draft(), source: sourceId.value, field: field.value },
+    { key: fieldKey.value, ...draft(), source: sourceId.value, field: field.value },
     dataHub.values,
   )
   return hit ? hit.value : null
@@ -132,7 +170,7 @@ const rawSample = computed(() => {
 })
 
 function addStop() {
-  stops.value.push({ at: 0, out: props.fieldType === 'color' ? '#ffffff' : 0 })
+  stops.value.push({ at: 0, out: fieldType.value === 'color' ? '#ffffff' : 0 })
 }
 function removeStop(i) {
   stops.value.splice(i, 1)
@@ -141,10 +179,45 @@ function sortStops() {
   stops.value.sort((a, b) => Number(a.at) - Number(b.at))
 }
 
+/** 当前选中的源是否已被某个节点的绑定引用（引用了就不让删，避免切断在线绑定） */
+const sourceInUse = computed(() => {
+  const id = sourceId.value
+  if (!id) return false
+  return editor.doc.nodes.some((n) =>
+    (n.bindings || []).some((b) => b && b.source === id),
+  )
+})
+
+/** 删掉没人用的数据源（手滑「＋」建出来的历史垃圾源这样清） */
+function deleteSource() {
+  const id = sourceId.value
+  if (!id || sourceInUse.value) return
+  removeDataSource(id)
+  sourceId.value = sources.value[0]?.id || ''
+}
+
 async function createSource() {
   const id = `src_${Date.now().toString(36)}`
   addDataSource({ id, type: 'http', url: '', intervalMs: 2000, params: {} })
+  // 记账：本次弹窗新建的源。取消 / 直接关窗时没人引用的要回收——
+  // 否则手滑点几下「＋」就在文档里堆几个空源（还会被自动保存进去）
+  createdSourceIds.value.push(id)
   sourceId.value = id
+}
+
+/**
+ * 关闭弹窗（取消 / X / Esc 都走这儿）。保存过的绑定会引用新建的源，
+ * 那种不删；只收「建了但最终没有任何绑定引用」的。
+ */
+function onClose() {
+  for (const id of createdSourceIds.value) {
+    const used = editor.doc.nodes.some((n) =>
+      (n.bindings || []).some((b) => b && b.source === id),
+    )
+    if (!used) removeDataSource(id)
+  }
+  createdSourceIds.value = []
+  emit('close')
 }
 
 /**
@@ -158,16 +231,16 @@ function testNow() {
   let v = preview.value
   if (v === null && map.value === 'threshold') v = stops.value[0]?.out
   if (v === null && map.value === 'linear') v = outRange.value[0]
-  if (v == null && props.fieldType === 'color') v = '#00e5ff'
+  if (v == null && fieldType.value === 'color') v = '#00e5ff'
   if (v == null) v = 1
-  emit('test', { key: props.fieldKey, value: v })
+  emit('test', { key: fieldKey.value, value: v })
 }
 
 function save() {
   // 净化后再存：色值字段收字符串、其余收数字，脏配置不落文档
   const stopsOut = (map.value === 'threshold' ? stops.value : []).map((s) => ({
     at: Number(s.at) || 0,
-    out: props.fieldType === 'color' ? String(s.out ?? '#ffffff') : Number(s.out) || 0,
+    out: fieldType.value === 'color' ? String(s.out ?? '#ffffff') : Number(s.out) || 0,
   }))
   emit('save', {
     source: sourceId.value,
@@ -186,7 +259,7 @@ function unbind() {
 </script>
 
 <template>
-  <AppModal :open="open" title="绑定数据" width="380px" @close="emit('close')">
+  <AppModal :open="open" title="绑定数据" width="380px" @close="onClose">
     <div class="bind-form">
       <div class="row">
         <label>目标字段</label>
@@ -201,6 +274,13 @@ function unbind() {
           </select>
           <span class="dot" :class="sourceOnline ? 'on' : 'off'" :title="sourceOnline ? '在线' : '离线/无数据'" />
           <button class="mini-btn" title="新建数据源（默认 http，下面可改类型）" @click="createSource">＋</button>
+          <button
+            class="mini-btn"
+            :class="{ disabled: sourceInUse }"
+            :disabled="sourceInUse"
+            :title="sourceInUse ? '这个源还有绑定在引用，不能删' : '删除这个数据源'"
+            @click="deleteSource"
+          >－</button>
         </span>
       </div>
       <p v-if="sourceError" class="warn">{{ sourceError }}</p>
@@ -308,7 +388,7 @@ function unbind() {
       <button v-if="binding" class="foot-btn danger" @click="emit('save', null)">解除绑定</button>
       <span class="foot-spacer" />
       <button class="foot-btn" title="不依赖数据源，直接往场景里灌一个值，验证引擎通路" @click="testNow">试一下</button>
-      <button class="foot-btn" @click="emit('close')">取消</button>
+      <button class="foot-btn" @click="onClose">取消</button>
       <button class="foot-btn primary" @click="save">保存</button>
     </template>
   </AppModal>
@@ -429,6 +509,11 @@ input[type='color'] {
 .mini-btn:hover {
   color: var(--t-strong);
   border-color: rgb(255 255 255 / 26%);
+}
+.mini-btn.disabled,
+.mini-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .preview {
   margin-top: var(--s-1);

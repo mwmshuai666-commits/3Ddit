@@ -23,6 +23,8 @@ import {
   findGroundCatalog,
   genId,
   normalizeNodeData,
+  normalizeNodeInteraction,
+  normalizeSceneCamera,
   ENV_DEFAULT_PROPS,
   ENV_DOC_DEFAULT,
 } from '../schema/sceneSchema'
@@ -66,6 +68,10 @@ const LIB_SECTIONS = ['ground', 'primitive', 'light', 'effect', 'model', 'html',
 const LIB_KEY = 'twinEditor.libSections'
 const LEFT_KEY = 'twinEditor.leftPanelCollapsed'
 const INSP_KEY = 'twinEditor.inspectorCollapsed'
+/** 交互预览开关存「关闭」位（默认开着）：和左右栏的「存折叠态」一个方向，缺省即默认 */
+const INTERACTION_OFF_KEY = 'twinEditor.interactionPreviewOff'
+const DEG2RAD = Math.PI / 180
+const RAD2DEG = 180 / Math.PI
 
 function readBool(key, dflt) {
   try {
@@ -114,6 +120,12 @@ export const ui = reactive({
   focus: { section: '', seq: 0 },
   /** 请求打开模型上传框（侧栏图标 / 视口浮动按钮） */
   uploadSeq: 0,
+  /**
+   * 交互预览开关（Inspector「交互」分区）。开着 = 编辑器里悬停 / 点击真实触发
+   * 半透明 / 轮廓光 / 视角飞行（所见即所得）；关掉 = 只存档不触发，
+   * 专心摆场景时不被半透明和镜头乱飞打扰。导出不受这个开关影响。
+   */
+  interactionPreview: !readBool(INTERACTION_OFF_KEY, false),
 })
 
 function persistLib() {
@@ -161,6 +173,16 @@ export function toggleInspector() {
   writeBool(INSP_KEY, !ui.inspectorOpen)
 }
 
+/**
+ * 交互预览开关：只影响编辑器里触不触发（半透明 / 轮廓光 / 视角飞行），
+ * 文档里的 interaction 配置照常保存、照常导出。关掉时把已生效的效果收干净。
+ */
+export function toggleInteractionPreview() {
+  ui.interactionPreview = !ui.interactionPreview
+  writeBool(INTERACTION_OFF_KEY, !ui.interactionPreview)
+  getEngine()?.setInteractionEnabled(ui.interactionPreview)
+}
+
 /** 打开模型上传那一栏并弹出文件框（侧栏图标 / 视口浮动按钮） */
 export function requestModelUpload() {
   focusLibSection('model')
@@ -197,6 +219,9 @@ async function loadSaved() {
     doc.sources = Array.isArray(doc.sources) ? doc.sources : []
     doc.nodes = (doc.nodes || []).map(normalizeNodeData)
     editor.doc = doc
+    // 遗留死源清一遍：节点被删过 / 绑定解过又存了档的，读档不该再把 ws 拉起来
+    // （只动文档；dataHub.start 在 initEditor 里随后按干净的定义跑）
+    dropUnusedSources()
     editor.savedAt = record.savedAt ? new Date(record.savedAt) : null
     lastSavedAt = record.savedAt
     return true
@@ -227,6 +252,8 @@ export async function initEditor(canvas) {
       return new File([asset.blob], asset.name, { type: 'image/vnd.radiance' })
     },
   })
+  // 交互预览开关：上次关着就关着进（只影响编辑器触发，不影响存档）
+  engine.setInteractionEnabled(ui.interactionPreview)
 
   await refreshAssets()
 
@@ -308,6 +335,12 @@ export async function initEditor(canvas) {
       dataHub,
       dataHubPush,
       dataDebug,
+      updateNodeInteraction,
+      updateSceneCamera,
+      captureCameraView,
+      captureNodeCameraView,
+      resetCameraView,
+      toggleInteractionPreview,
     }
   }
 }
@@ -379,6 +412,8 @@ export function removeNode(id) {
   editor.doc.nodes.splice(idx, 1)
   getEngine()?.removeNode(id)
   lastInjected.delete(id)
+  // 节点没了：它引用的数据源若也没人再绑，ws / http 得收，不能还挂着重连
+  gcSources()
   if (editor.selectedId === id) editor.selectedId = null
 }
 
@@ -439,6 +474,55 @@ export function updateNodeTransform(id, part, axisIndex, value) {
   if (!node || Number.isNaN(value)) return
   node.transform[part][axisIndex] = value
   getEngine()?.setNodeTransform(id, node.transform)
+}
+
+/**
+ * 改节点的鼠标交互（Inspector「交互」分区）：写文档（可保存）+ 同步引擎。
+ * patch 是部分更新（{ trigger } / { transparent: { enabled } } / …），
+ * 嵌套对象按字段合，不整块替换——半透明白点了两下不该把颜色码丢回默认值。
+ */
+export function updateNodeInteraction(id, patch) {
+  const node = findNode(id)
+  if (!node) return
+  const current = normalizeNodeInteraction(node)
+  node.interaction = normalizeNodeInteraction({
+    interaction: {
+      trigger: patch.trigger !== undefined ? patch.trigger : current.trigger,
+      transparent: { ...current.transparent, ...(patch.transparent || {}) },
+      outline: { ...current.outline, ...(patch.outline || {}) },
+      camera: {
+        ...current.camera,
+        ...(patch.camera || {}),
+        // view 也按字段合：改一个角度不该把目标点 / 距离丢回默认（null → auto）
+        view: patch.camera?.view
+          ? { ...(current.camera.view || {}), ...patch.camera.view }
+          : current.camera.view,
+      },
+    },
+  })
+  // 引擎侧立即换配置（旧效果先还原再登记）；
+  // 生效时机交给事件：正在悬停 / 选中的节点要下一次触发才刷新，可预期
+  getEngine()?.updateInteraction(id, node.interaction)
+}
+
+/**
+ * 「用当前视角」（视角飞行 · 指定机位）：把引擎当前机位（度 → 弧度）录进该节点。
+ * 切到「指定机位」还没有现成机位时，Inspector 会先调它灌一份，免得五个框全是空的。
+ */
+export function captureNodeCameraView(id) {
+  const engine = getEngine()
+  if (!engine) return
+  const s = engine.getCameraState()
+  updateNodeInteraction(id, {
+    camera: {
+      view: {
+        alpha: s.alpha * DEG2RAD,
+        beta: s.beta * DEG2RAD,
+        radius: s.radius,
+        target: s.target,
+      },
+    },
+  })
 }
 
 /* ============ 折点（能量管道 / datav 特效共用） ============ */
@@ -602,6 +686,42 @@ export function removeDataSource(id) {
 }
 
 /**
+ * 摘掉「没有任何绑定引用」的数据源定义（只动文档，不断连接）。
+ * @returns {number} 摘掉几条
+ *
+ * manual 源不摘：它没有连接开销，宿主页面 dataHubPush 随时可能往这个 id 里灌数据；
+ * http / ws 是实打实的轮询 / 长连，没绑定还挂着就是白占（ws 断线还会一直重连）。
+ */
+function dropUnusedSources() {
+  const sources = editor.doc.sources
+  if (!Array.isArray(sources) || !sources.length) return 0
+
+  const used = new Set()
+  for (const node of editor.doc.nodes) {
+    for (const b of node.bindings || []) {
+      if (b?.source) used.add(b.source)
+    }
+  }
+
+  const dead = sources.filter((s) => s?.type !== 'manual' && !used.has(s?.id))
+  for (const s of dead) {
+    const idx = sources.indexOf(s)
+    if (idx >= 0) sources.splice(idx, 1)
+  }
+  return dead.length
+}
+
+/**
+ * 回收没人用的数据源：删节点 / 解绑定之后调用。
+ * 只摘文档不够——dataHub 里 ws runner 还挂着；但也不用在这儿直接 start()：
+ * 摘定义会让 doc.sources 变化，initEditor 里那个 watch(JSON.stringify) 下一个 tick
+ * 就 dataHub.start()（内部先 stop：关 socket、清重连 timer），连接当场断。
+ */
+function gcSources() {
+  dropUnusedSources()
+}
+
+/**
  * 设 / 改 / 解 某个字段的绑定（Inspector 绑定弹窗保存）。
  * binding 传 null = 解绑。写完立即求值一次，不用等下一轮数据。
  */
@@ -622,12 +742,69 @@ export function setNodeBinding(id, key, binding) {
     if (idx >= 0) node.bindings[idx] = next
     else node.bindings.push(next)
   }
+  // 解绑可能让某个源瞬间没人引用：ws / http 一起收（manual 不收，见 dropUnusedSources）
+  gcSources()
   // 立即生效 + 落盘（绑定配置是文档的一部分，要保存）
   applyBindings()
   markDirty()
 }
 
 /* ============ 场景级设置 ============ */
+
+/** 现值（度口径）供面板回显 / 局部更新：文档存过按文档，没存过按引擎当前视角 */
+function currentSceneCameraDeg() {
+  const saved = normalizeSceneCamera(editor.doc.scene.camera)
+  if (saved) {
+    const round3 = (v) => Math.round(v * 1000) / 1000
+    return {
+      alpha: round3(saved.alpha * RAD2DEG),
+      beta: round3(saved.beta * RAD2DEG),
+      radius: saved.radius,
+      target: saved.target,
+    }
+  }
+  return getEngine()?.getCameraState() || null
+}
+
+/**
+ * 改初始机位（Inspector「初始视角」分区）。patch 口径：alpha / beta 用「度」，
+ * radius / target 原值；缺字段沿现值。写完立即生效（编辑器当场跳到新机位）+ 存档。
+ */
+export function updateSceneCamera(patch = {}) {
+  const engine = getEngine()
+  if (!engine) return
+  const base = currentSceneCameraDeg()
+  if (!base) return
+  const next = {
+    alpha: patch.alpha !== undefined ? Number(patch.alpha) : base.alpha,
+    beta: patch.beta !== undefined ? Number(patch.beta) : base.beta,
+    radius: patch.radius !== undefined ? Number(patch.radius) : base.radius,
+    target: Array.isArray(patch.target) ? patch.target.map(Number) : base.target,
+  }
+  if ([next.alpha, next.beta, next.radius, ...next.target].some((v) => !Number.isFinite(v))) return
+  const camera = normalizeSceneCamera({
+    alpha: next.alpha * DEG2RAD,
+    beta: next.beta * DEG2RAD,
+    radius: next.radius,
+    target: next.target,
+  })
+  if (!camera) return
+  editor.doc.scene.camera = camera
+  engine.setInitialCamera(camera)
+}
+
+/** 「用当前视角」：引擎现在看着的机位 → 初始机位 */
+export function captureCameraView() {
+  const engine = getEngine()
+  if (!engine) return
+  updateSceneCamera(engine.getCameraState())
+}
+
+/** 「恢复默认」：清掉初始机位，回到按地面大小自动取景 */
+export function resetCameraView() {
+  editor.doc.scene.camera = null
+  getEngine()?.setInitialCamera(null)
+}
 
 export function setGroundType(type) {
   const catalog = findGroundCatalog(type)

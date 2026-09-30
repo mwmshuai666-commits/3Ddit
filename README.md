@@ -39,6 +39,31 @@ HTML 栏靠 SVG foreignObject 栅格化（写之前会自动把 `<br>`、`&nbsp;
 
 快捷键：`W` 移动 · `E` 旋转 · `R` 缩放 · `F` 聚焦 · `Delete` 删除
 
+## 节点交互（点击 / 划过 → 半透明 · 外轮廓光 · 视角飞行）
+
+选中任意节点 → 属性面板「交互」分区，给这个元素配一套鼠标行为：
+
+| 配置 | 说明 |
+| --- | --- |
+| 触发方式 | 不交互 / 鼠标点击 / 鼠标划过 |
+| 半透明 | 触发时把材质改成半透明：不透明度 + 透明颜色（glb 的 PBR 与几何体的 Standard 材质都吃） |
+| 外轮廓光 | 触发时沿网格亮一圈描边光（HighlightLayer），颜色可设 |
+| 视角飞行 | 触发时相机用 babylon-datav 同款 CubicEase 缓动飞过去：默认按包围盒**自动框住**，也可切**指定机位**——存一套 水平角/俯仰角/距离/目标点（面板按度编辑，「用当前视角」一键录入；alpha 走最短旋转方向） |
+
+- 划过 = 进生效、出还原；点击后保持生效，点到别的节点 / 空白处（或删节点 / 改配置）才还原，
+  点同一个节点会重新取景一次；视角飞行跟随每次生效的点击。
+- 编辑器里即时预览；分区底部的「编辑器预览」关掉后只影响编辑器触发，存档和导出照旧。
+- 现支持几何体 / 模型 / HTML / 网页面板；管道、特效、灯光的材质不由引擎直管，暂不接入。
+- 配置存在节点的 `interaction` 字段里，随场景文档保存，导出单文件 HTML / ZIP / JSON 一起带走。
+
+## 初始视角
+
+未选中任何节点（或选中底板）时，属性面板「初始视角」分区设置进入场景时的机位：
+水平角 / 俯仰角 / 距离 / 目标点五个数值框；「用当前视角」把当前机位存下来，
+「恢复默认」回到按地面大小自动取景。机位存在 `scene.camera`（弧度），读档和
+导出都认——单文件 HTML 会把它透传成播放器的 `options.camera`，进场就是设定的角度；
+不设这个字段则沿用「按地面大小自动取景」的老行为。
+
 ## 导出
 
 右上角「导出」按钮，三个入口的区别就是**资源怎么带走**：
@@ -67,6 +92,13 @@ HTML 栏靠 SVG foreignObject 栅格化（写之前会自动把 `<br>`、`&nbsp;
 绑定只改显示效果，**不动几何**；数据不进 props、不触发自动保存。`sources` / `bindings` 写进场景文档，
 导出后播放器（v1.1+）同样生效——单文件 HTML 里用 `window.twinData.push('源id', 数据)` 注入，
 模块用法见 [babylon-scene-player README](../babylon-scene-player/README.md#数据接入sources--bindings)。
+
+删除节点 / 解除绑定后，**没有任何节点再引用的 http / ws 源会自动关停**（socket 关闭、不再重连），
+并从文档里摘掉，不会一直空连；`manual` 源不摘（没有连接开销，宿主注入随时可能往这个 id 推数据）。
+读档时也会先清一遍遗留死源。
+
+> 📖 **完整教学见 [`数据绑定手册.md`](./数据绑定手册.md)**：三种数据源参数、三种映射怎么选、可绑字段清单、
+> JSON 协议逐字段参考、导出去别处用的推送代码、排查 checklist。
 
 ### 导出需要登录
 
@@ -174,6 +206,10 @@ babylon-scene-player（播放内核，npm 库）
       "type": "box | hemispheric | energy | arrowFlyLine | glb | html | ...",
       "transform": { "position": [0,0,0], "rotation": [0,0,0], "scaling": [1,1,1] }, // 角度制
       "props": {}                // 类型相关参数，折点在 props.points（波纹墙是 [x,z]）
+      // interaction: 鼠标交互（可选，缺省 = 不交互）——
+      //   { trigger: 'click'|'hover', transparent: { enabled, opacity, color },
+      //     outline: { enabled, color },
+      //     camera: { enabled, duration, mode: 'auto'|'custom', view } }
     }
   ],
   // html 节点：props = { html, width, height, mode: '3d' | 'billboard' }
@@ -189,6 +225,8 @@ babylon-scene-player（播放内核，npm 库）
 src/editor/store/editor.js       编辑器状态 + Dexie 持久化（含素材库：glb / hdr）
 src/editor/core/EditorEngine.js  Babylon 引擎、Gizmo、渲染组约定
 src/editor/core/htmlPanel.js     HTML 面板渲染（SVG foreignObject → DynamicTexture）
+src/editor/core/interactionRuntime.js 鼠标交互运行时：点击 / 划过 → 半透明 / 外轮廓光 / 视角飞行
+src/editor/core/cameraFly.js     相机缓动飞行（对齐 babylon-datav SceneManager.flyCameraTo 的缓动）
 src/editor/schema/sceneSchema.js 场景文档协议 + 各类型的属性表（Inspector 按它自动生成表单）
 src/editor/components/           工具栏 / 场景树 / 属性面板 / 视口 / 导出菜单
 src/editor/components/icons.js   内联 SVG 图标表（24×24、1.6px 描边、跟字色走）

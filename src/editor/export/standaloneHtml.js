@@ -101,7 +101,9 @@ ${playerBundle}
     <script>
       // 场景数据与资源（base64 内嵌，无需同目录文件）
       window.__SCENE_DOC__ = ${safeJson(doc)};
-      window.__SCENE_OPTIONS__ = {${(groundTextures || []).length
+      window.__SCENE_OPTIONS__ = {${doc.scene?.camera
+        ? `\n        camera: ${safeJson(doc.scene.camera)}, // 初始机位（Inspector「初始视角」存进文档的）`
+        : ''}${(groundTextures || []).length
         ? `\n        groundTextures: ${safeJson(groundTextures)},`
         : ''}
         onError(err) {

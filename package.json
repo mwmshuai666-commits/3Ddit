@@ -8,6 +8,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "sync:player": "node scripts/sync-player.mjs",
+    "smoke:schema": "node scripts/smoke-interaction.mjs",
+    "smoke:runtime": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-interaction-runtime.mjs",
+    "smoke:binding": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-json-binding.mjs",
+    "smoke:export": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-export-keep.mjs",
+    "smoke:hit": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-player-hit.mjs",
+    "smoke:data": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-data-option.mjs",
     "predev": "node scripts/sync-player.mjs",
     "prebuild": "node scripts/sync-player.mjs"
   },

@@ -4,7 +4,8 @@
  * 文档结构：
  * {
  *   version: '0.1.0',
- *   scene: { background, ground: { type, props }, environment: { type, assetId, props } },
+ *   scene: { background, ground: { type, props }, environment: { type, assetId, props },
+ *            camera: { alpha, beta, radius, target:[x,y,z] } },  // 初始机位（弧度）；缺省=按地面自动取景
  *   sources: [ { id, type:'http'|'ws'|'manual', url, intervalMs, path } ],  // 数据源定义（可空）
  *   nodes: [
  *     {
@@ -16,6 +17,12 @@
  *       props: {},                          // 类型相关参数，见目录 CATALOG（人工设定的静态基线）
  *       hidden: false,                      // 手动显隐（SceneTree 眼睛图标）
  *       bindings: [],                       // 数据绑定：外部数据 → props 的运行时覆盖（见 core/binding.js）
+ *       interaction: {                      // 鼠标交互：点击 / 划过 → 半透明 / 外轮廓光 / 视角飞行
+ *         trigger: 'none',                  //   'none' | 'click' | 'hover'
+ *         transparent: { enabled, opacity, color },  // 半透明：不透明度 + 透明颜色
+ *         outline: { enabled, color },      // 外轮廓光：HighlightLayer 描边光
+ *         camera: { enabled, duration, mode: 'auto'|'custom', view },  // 视角飞行：相机缓动飞到元素上
+ *       }                                   //   mode 'custom' + view（弧度，同 scene.camera）= 指定机位；否则按包围盒自动框住
  *     }
  *   ],
  *   cameras: []                              // 预留：机位书签 / 巡航
@@ -23,6 +30,11 @@
  *
  * 数据接入约定：绑定只驱动「look 级」字段（颜色 / 显隐 / 方向 / 光带参数），
  * 永远不写回 props、永远不碰几何字段（points / radius 等）——见 core/binding.js 头注。
+ *
+ * 交互约定：interaction 是节点级字段（不进 props——props 按类型各不相同，交互是所有
+ * 类型通用的横切能力），只对「有网格」的 kind 生效（primitive / model / html / web）；
+ * pipe / effect 的材质归 pipeBuilder / datav 组件管，light 没有网格，都不接。
+ * 半透明 / 轮廓光都是「触发时叠加、还原时恢复」的运行时效果，绝不写坏材质基线。
  */
 
 export const SCHEMA_VERSION = '0.1.0'
@@ -31,13 +43,22 @@ export const GROUND_SELECTION = '@ground' // 场景树中“地面”的特殊�
 
 /* ---------------- 场景底板 ---------------- */
 
+/**
+ * 默认地板尺寸（size）= 边长。原来 200 对「镜头一拉远就照不全」负直接责任：
+ * 发光网格只覆盖 ±100，再往外就是暗背景，观感就是地面被切 / 照射面积不够。
+ * 现在默认放大到 2000；格子实际大小不变——贴图 repeat = size / tile 是自动算的
+ * （见 EditorEngine._buildGround），size 放大几倍、格子数同比放大，视觉密度一致。
+ * 已有场景的 size 存在各自文档里，不受此默认值影响，要改在「底板参数 → 尺寸」。
+ */
+export const GROUND_DEFAULT_SIZE = 200
+
 export const GROUND_CATALOG = [
   {
     type: 'grid',
     name: '科技网格地面',
     desc: '深色发光网格，园区/通用',
     defaultProps: {
-      size: 200,
+      size: GROUND_DEFAULT_SIZE,
       tile: 10,
       color: '#0a1730',
       lineColor: '#1e6bff',
@@ -54,7 +75,7 @@ export const GROUND_CATALOG = [
     name: '纯色平面',
     desc: '素色地面，工厂/占位',
     defaultProps: {
-      size: 200,
+      size: GROUND_DEFAULT_SIZE,
       color: '#1c2635',
     },
     form: [
@@ -67,6 +88,8 @@ export const GROUND_CATALOG = [
     name: '机房防静电地板',
     desc: '600 格纹地板，机房场景',
     defaultProps: {
+      // 机房地板不跟着放大：砖纹贴图按 tile=2 平铺，size 放大 10 倍就是 1000×1000
+      // 块砖，远景全是摩尔纹。要大面积在面板里把 size 和 tile 一起调
       size: 200,
       tile: 2,
       color: '#20262f',
@@ -85,7 +108,7 @@ export const GROUND_CATALOG = [
     desc: '圆形扩散波纹，园区/大屏',
     // size 是圆的直径，与其它地板的方地边长对齐（波纹波长取半径，见 core/digitalGround.js）
     defaultProps: {
-      size: 200,
+      size: GROUND_DEFAULT_SIZE,
       speed: 1,
       color: '#ffffff', // 与 three 原版默认色一致
       intensity: 1.6,
@@ -804,13 +827,74 @@ export function genId() {
 /* ---------------- 工厂 ---------------- */
 
 /**
+ * 鼠标交互（节点级）默认值：不交互。字段含义见文件头注的协议说明。
+ *   trigger    —— 'none' | 'click' | 'hover'
+ *   transparent —— 触发时把材质改成半透明：不透明度 + 透明颜色（着色）
+ *   outline    —— 触发时点亮外轮廓光（HighlightLayer），颜色可设
+ *   camera     —— 触发时相机缓动飞到元素上（babylon-datav SceneManager.flyCameraTo
+ *                 同款 CubicEase，见 core/cameraFly.js），duration 毫秒；
+ *                 mode 'auto' = 按包围盒自动框住（默认），'custom' = 按 view 这套机位
+ *                 （弧度，口径同 scene.camera；null = 退回自动）
+ */
+export const INTERACTION_DEFAULT = {
+  trigger: 'none',
+  transparent: { enabled: false, opacity: 0.35, color: '#00e5ff' },
+  outline: { enabled: false, color: '#ffd640' },
+  camera: { enabled: false, duration: 1200, mode: 'auto', view: null },
+}
+
+const INTERACTION_TRIGGERS = ['none', 'click', 'hover']
+const clamp = (v, min, max, dflt) => {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return dflt
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * 读节点时补齐交互字段：老文档 / 外部 JSON 没有 interaction，一律按「不交互」兜底；
+ * 有但字段残缺的（手改过 JSON）按默认值补齐，缺一个数值不至于让运行时拿到 NaN。
+ */
+export function normalizeNodeInteraction(node) {
+  if (!node || typeof node !== 'object') return { ...INTERACTION_DEFAULT }
+  const it = node.interaction || {}
+  const transparent = { ...INTERACTION_DEFAULT.transparent, ...(it.transparent || {}) }
+  const outline = { ...INTERACTION_DEFAULT.outline, ...(it.outline || {}) }
+  const camera = { ...INTERACTION_DEFAULT.camera, ...(it.camera || {}) }
+  return {
+    trigger: INTERACTION_TRIGGERS.includes(it.trigger) ? it.trigger : 'none',
+    transparent: {
+      enabled: transparent.enabled === true,
+      opacity: clamp(transparent.opacity, 0.05, 1, INTERACTION_DEFAULT.transparent.opacity),
+      color: typeof transparent.color === 'string' && transparent.color ? transparent.color : INTERACTION_DEFAULT.transparent.color,
+    },
+    outline: {
+      enabled: outline.enabled === true,
+      color: typeof outline.color === 'string' && outline.color ? outline.color : INTERACTION_DEFAULT.outline.color,
+    },
+    camera: {
+      enabled: camera.enabled === true,
+      duration: clamp(camera.duration, 200, 5000, INTERACTION_DEFAULT.camera.duration),
+      mode: camera.mode === 'custom' ? 'custom' : 'auto',
+      // 指定机位（弧度，口径同 scene.camera）；null / 坏值 = 自动框住物体
+      view: normalizeSceneCamera(camera.view),
+    },
+  }
+}
+
+/**
  * 数据接入三件套之节点侧默认值：
  *   hidden   —— 手动显隐基线（false = 显示；SceneTree 眼睛图标切换）
  *   bindings —— 数据绑定列表（空 = 不接数据；每项结构见 core/binding.js 头注）
+ *   interaction —— 鼠标交互（不交互为默认；Inspector「交互」分区配置）
  * 只写死在「新建节点」这一步；读老文档走 normalizeNodeData 兜底，不破坏存量场景。
  */
 export function withDataFields(node) {
-  return { ...node, hidden: false, bindings: [] }
+  return {
+    ...node,
+    hidden: false,
+    bindings: [],
+    interaction: normalizeNodeInteraction(null),
+  }
 }
 
 /** 读节点时补齐数据接入字段：老文档 / 外部 JSON 没有它们，一律按 显示 + 无绑定 兜底 */
@@ -820,6 +904,31 @@ export function normalizeNodeData(node) {
     ...node,
     hidden: node.hidden === true,
     bindings: Array.isArray(node.bindings) ? node.bindings : [],
+    interaction: normalizeNodeInteraction(node),
+  }
+}
+
+/**
+ * 初始机位（scene.camera）归一化：弧度。缺 / 坏 → null（调用方退回「按地面大小自动
+ * 取景」，即改造前的行为，老文档零感知）。target 给三位小数，减少保存噪音。
+ */
+export function normalizeSceneCamera(camera) {
+  if (!camera || typeof camera !== 'object') return null
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null)
+  const alpha = num(camera.alpha)
+  const beta = num(camera.beta)
+  const radius = num(camera.radius)
+  const target = Array.isArray(camera.target)
+    ? camera.target.map((v) => num(v))
+    : [null, null, null]
+  if (alpha === null || beta === null || radius === null || target.some((v) => v === null)) {
+    return null
+  }
+  return {
+    alpha,
+    beta,
+    radius,
+    target: target.map((v) => Math.round(v * 1000) / 1000),
   }
 }
 
@@ -877,6 +986,8 @@ export function createDefaultDocument() {
         props: { ...GROUND_CATALOG[0].defaultProps },
       },
       environment: { ...ENV_DOC_DEFAULT, props: { ...ENV_DOC_DEFAULT.props } },
+      // 初始机位：null = 按地面大小自动取景（Inspector「初始视角」分区可存一份）
+      camera: null,
     },
     // 数据源定义（能量管道显隐 / 方向 / 颜色等的数据由此而来）。
     // 空数组 = 纯静态场景；运行时由 core/dataHub.js 管理，求值见 core/binding.js。
