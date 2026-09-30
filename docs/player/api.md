@@ -1,3 +1,8 @@
+---
+title: 播放包 API 参考
+description: mountScene / fetchScene / pushData / SceneRuntime 等 API 文档
+---
+
 # 播放包 API 参考
 
 ## 导出一览
@@ -31,7 +36,7 @@ import {
 | `assetBaseUrl` | `''` | 文档里 `assets[].file` 相对路径的前缀 |
 | `textureBaseUrl` | 内置 base64 | 数字科技地板四张贴图的目录 |
 | `groundTextures` | — | 直接给四个贴图 URL，覆盖内置 |
-| `resolveAsset` | — | 自己决定素材来源：`(assetId, node) => Promise<File\|Blob\|string>\|File\|Blob\|string`（模型传 node，环境贴图传 `{id,name,kind:'hdr'}`） |
+| `resolveAsset` | — | 自己决定素材来源：`(assetId, node) => Promise&lt;File\|Blob\|string&gt;\|File\|Blob\|string`（模型传 node，环境贴图传 `{id,name,kind:'hdr'}`） |
 | `camera` | — | 初始机位（弧度，需给全套）；优先级高于文档 `scene.camera` |
 | `data` | — | 数据接入省事形态：按源 id 给 对象 / 函数 / `{intervalMs, load}`，详见 [数据绑定手册](../binding-manual.md) §7.4 |
 | `dataPollMs` | 2000 | 轮询默认间隔 |
@@ -45,11 +50,11 @@ import {
 | `runtime` | SceneRuntime 实例（内核） |
 | `scene` / `engine` | Babylon 对象 |
 | `canvas` | 播放器自建的 canvas |
-| `ready` | Promise<SceneDocument>——场景（含异步模型）全部就绪 |
+| `ready` | Promise&lt;SceneDocument&gt;——场景（含异步模型）全部就绪 |
 | `pushData(id, payload)` | manual 源数据注入 |
 | `dispose()` | 停渲染、停轮询、释放场景 |
 
-## fetchScene(url, options) → Promise<{doc, assetBaseUrl}>
+## fetchScene(url, options) → Promise&lt;{doc, assetBaseUrl}&gt;
 
 远端/本地 scene.json → 文档对象，并推算出 `assetBaseUrl`（默认取 JSON 自己的位置）。
 完整包 ZIP 解压后 `scene.json` 和 `models/` 放一起就能直接跑。
@@ -68,7 +73,7 @@ import {
 | 成员 | 说明 |
 | --- | --- |
 | `loadDocument(doc)` | 载入/重载场景（可重复调用，先清空再重建） |
-| `entries` | Map<nodeId, entry>——节点 → 运行时对象 |
+| `entries` | Map&lt;nodeId, entry&gt;——节点 → 运行时对象 |
 | `camera` | ArcRotateCamera |
 | `interactions` | InteractionRuntime（`_cfg` 是登记过的交互配置） |
 | ` frameTargetOf(nodeId)` | 算「框住这个节点」的取景点 |

@@ -1,3 +1,8 @@
+---
+title: 场景文档协议
+description: scene.json 完整字段参考
+---
+
 # 场景文档协议（scene.json）
 
 编辑器与播放包之间的**唯一契约**。纯 JSON，可手改、可 diff、可程序生成——

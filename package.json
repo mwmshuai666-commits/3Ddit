@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "sync:player": "node scripts/sync-player.mjs",
     "smoke:schema": "node scripts/smoke-interaction.mjs",
     "smoke:runtime": "node --no-warnings --loader ./scripts/js-ext-loader.mjs scripts/smoke-interaction-runtime.mjs",
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitepress": "^1.6.0"
   }
 }

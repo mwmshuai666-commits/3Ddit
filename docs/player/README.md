@@ -1,3 +1,8 @@
+---
+title: 播放包总览
+description: babylon-scene-player 四种接入形态与安装方式
+---
+
 # 3D 场景播放包 · 总览
 
 `babylon-scene-player` 把一份 `scene.json` 跑成 3D 场景。**零框架依赖**

@@ -1,3 +1,8 @@
+---
+title: FAQ
+description: 编辑器、交互、播放包常见问题排查
+---
+
 # FAQ
 
 ## 编辑器
